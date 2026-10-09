@@ -62,7 +62,7 @@ test("state-changing requests without the CSRF header are rejected", async () =>
 
 test("/api/me reports signed-out state without leaking data", async () => {
   const body = await (await fetch(`${base}/api/me`)).json();
-  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", topics: [] });
+  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem" });
 });
 
 test("security headers are set", async () => {
@@ -86,23 +86,6 @@ test("a signed-in user sees only their own suggestions and cannot skip another u
   });
   const after = await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json();
   assert.equal(after.suggestions.length, 1);
-});
-
-test("topics are saved per user, cleaned, and validated", async () => {
-  const put = (body) =>
-    fetch(base + "/api/settings", {
-      method: "PUT",
-      headers: { cookie: cookieFor(alice), "X-Requested-With": "fetch", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  assert.equal((await put({ topics: [" AI ", "ai", "Finance", ""] })).status, 200);
-  const me = async (id) => (await (await fetch(base + "/api/me", { headers: { cookie: cookieFor(id) } })).json()).topics;
-  assert.deepEqual(await me(alice), ["AI", "Finance"]);
-  assert.deepEqual(await me(bob), []);
-  assert.equal((await put({ topics: "AI" })).status, 400);
-  assert.equal((await put({ topics: ["x".repeat(41)] })).status, 400);
-  assert.equal((await put({ topics: [] })).status, 200);
-  assert.deepEqual(await me(alice), []);
 });
 
 test("/api/me returns the signed-in user's own time zone", async () => {

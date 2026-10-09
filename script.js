@@ -29,6 +29,7 @@ let viewMonth = new Date().getMonth();
 let selectedDate = null;
 let me = null;
 let suggestions = [];
+let searchTerms = [];
 
 function loadTasks() {
   try {
@@ -157,7 +158,6 @@ function renderAccount() {
   scanButton.hidden = !(me.authenticated && me.connected);
   timeZoneSelect.hidden = !me.authenticated;
   topicsInput.hidden = !(me.authenticated && me.connected);
-  if (document.activeElement !== topicsInput) topicsInput.value = me.topics.join(", ");
 
   if (me.authenticated && timeZoneSelect.options.length === 0) {
     const zones = Intl.supportedValuesOf("timeZone");
@@ -199,10 +199,11 @@ function describeWhen(suggestion) {
 
 function matchesTopics(suggestion) {
   const text = `${suggestion.name} ${suggestion.organizer} ${suggestion.offer}`.toLowerCase();
-  return me.topics.some((topic) => text.includes(topic.toLowerCase()));
+  return searchTerms.some((topic) => text.includes(topic.toLowerCase()));
 }
 
 function renderSuggestions() {
+  const ticked = new Set(checkedIds());
   suggestionList.replaceChildren();
   otherList.replaceChildren();
   otherDetails.hidden = true;
@@ -219,7 +220,7 @@ function renderSuggestions() {
     suggestionList.append(empty);
   }
 
-  const ranked = me.topics.length > 0;
+  const ranked = searchTerms.length > 0;
   const matching = ranked ? forDate.filter(matchesTopics) : forDate;
   const other = ranked ? forDate.filter((suggestion) => !matchesTopics(suggestion)) : [];
 
@@ -227,7 +228,7 @@ function renderSuggestions() {
     suggestionList.querySelector(".empty")?.remove();
     const none = document.createElement("li");
     none.className = "empty";
-    none.textContent = "No events match your topics on this date.";
+    none.textContent = "No events match your search on this date.";
     suggestionList.append(none);
   }
   if (other.length > 0) {
@@ -243,6 +244,7 @@ function renderSuggestions() {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.dataset.id = suggestion.id;
+    checkbox.checked = ticked.has(suggestion.id);
     checkbox.setAttribute("aria-label", `Select "${suggestion.name}"`);
 
     const body = document.createElement("div");
@@ -436,17 +438,9 @@ document.getElementById("next-month").addEventListener("click", () => shiftMonth
 document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
-topicsInput.addEventListener("change", async () => {
-  const topics = topicsInput.value.split(",").map((topic) => topic.trim()).filter(Boolean);
-  try {
-    await api("/api/settings", { method: "PUT", body: { topics } });
-    me.topics = topics.filter((topic, i) => topics.findIndex((t) => t.toLowerCase() === topic.toLowerCase()) === i);
-    topicsInput.value = me.topics.join(", ");
-    statusLine.textContent = me.topics.length ? "Topics saved. Matching events are listed first." : "Topics cleared.";
-    renderSuggestions();
-  } catch (error) {
-    statusLine.textContent = error.message;
-  }
+topicsInput.addEventListener("input", () => {
+  searchTerms = topicsInput.value.split(",").map((term) => term.trim()).filter(Boolean);
+  renderSuggestions();
 });
 timeZoneSelect.addEventListener("change", async () => {
   try {
