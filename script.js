@@ -9,6 +9,11 @@ const grid = document.getElementById("calendar-grid");
 
 const account = document.getElementById("account");
 const signIn = document.getElementById("sign-in");
+const connectFull = document.getElementById("connect-full");
+const usageLabel = document.getElementById("usage");
+const signOutButton = document.getElementById("sign-out");
+const deleteButton = document.getElementById("delete-account");
+const addSelectedButton = document.getElementById("add-selected");
 const accountEmail = document.getElementById("account-email");
 const scanButton = document.getElementById("scan-now");
 const timeZoneSelect = document.getElementById("time-zone");
@@ -167,12 +172,18 @@ function renderAccount() {
   }
 
   account.hidden = false;
-  signIn.hidden = me.authenticated && me.connected;
+  signIn.hidden = me.authenticated;
+  connectFull.hidden = me.authenticated && me.connected;
+  connectFull.textContent = me.authenticated ? "Connect Gmail & Calendar (optional)" : "Sign in and connect Gmail & Calendar";
   accountEmail.textContent = me.authenticated ? me.email : "";
+  usageLabel.textContent = me.authenticated && me.usage ? `Email reads today: ${me.usage.used} of ${me.usage.limit}` : "";
   scanButton.hidden = !(me.authenticated && me.connected);
+  addSelectedButton.hidden = !me.connected;
+  signOutButton.hidden = !me.authenticated;
+  deleteButton.hidden = !me.authenticated;
   timeZoneSelect.hidden = !me.authenticated;
-  topicsInput.hidden = !(me.authenticated && me.connected);
-  digestLabel.hidden = !(me.authenticated && me.connected && me.digestAvailable);
+  topicsInput.hidden = !me.authenticated;
+  digestLabel.hidden = !(me.authenticated && me.digestAvailable);
   digestBox.checked = me.digest;
 
   if (me.authenticated && timeZoneSelect.options.length === 0) {
@@ -189,7 +200,7 @@ let loadSequence = 0;
 
 async function loadSuggestions() {
   const request = ++loadSequence;
-  if (!me?.authenticated || !me.connected) {
+  if (!me?.authenticated) {
     suggestions = [];
     return;
   }
@@ -270,7 +281,7 @@ function renderMonthOverview() {
   monthList.replaceChildren();
   monthOtherList.replaceChildren();
   monthOther.hidden = true;
-  monthOverview.hidden = !(me?.authenticated && me.connected && suggestions.length > 0);
+  monthOverview.hidden = !(me?.authenticated && suggestions.length > 0);
   if (monthOverview.hidden) return;
 
   const searching = searchTerms.length > 0;
@@ -302,7 +313,7 @@ function renderSuggestions() {
   suggestionList.replaceChildren();
   otherList.replaceChildren();
   otherDetails.hidden = true;
-  suggestionsPanel.hidden = !(me?.authenticated && me.connected && selectedDate);
+  suggestionsPanel.hidden = !(me?.authenticated && selectedDate);
   if (suggestionsPanel.hidden) return;
 
   suggestionsTitle.textContent = `Suggested events on ${formatDateKey(selectedDate)}`;
@@ -629,11 +640,35 @@ form.addEventListener("submit", (event) => {
 
 document.getElementById("prev-month").addEventListener("click", () => shiftMonth(-1));
 document.getElementById("next-month").addEventListener("click", () => shiftMonth(1));
-document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
+addSelectedButton.addEventListener("click", () => changeSelected("add"));
 document.getElementById("download-ics").addEventListener("click", downloadIcs);
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
 pasteFind.addEventListener("click", findEventsInPastedEmail);
+signOutButton.addEventListener("click", async () => {
+  await api("/auth/logout", { method: "POST" }).catch(() => {});
+  location.reload();
+});
+let deleteArmed = null;
+deleteButton.addEventListener("click", async () => {
+  if (!deleteArmed) {
+    deleteButton.textContent = "Click again to delete everything";
+    deleteArmed = setTimeout(() => {
+      deleteArmed = null;
+      deleteButton.textContent = "Delete my account";
+    }, 5000);
+    return;
+  }
+  clearTimeout(deleteArmed);
+  try {
+    await api("/auth/delete", { method: "POST" });
+    location.reload();
+  } catch (error) {
+    deleteArmed = null;
+    deleteButton.textContent = "Delete my account";
+    statusLine.textContent = error.message;
+  }
+});
 topicsInput.addEventListener("input", () => {
   searchTerms = topicsInput.value.split(",").map((term) => term.trim()).filter(Boolean);
   renderSuggestions();

@@ -77,7 +77,7 @@ test("state-changing requests without the CSRF header are rejected", async () =>
 
 test("/api/me reports signed-out state without leaking data", async () => {
   const body = await (await fetch(`${base}/api/me`)).json();
-  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", timeZoneSet: true, digest: false, digestAvailable: true });
+  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", timeZoneSet: true, digest: false, digestAvailable: true, usage: null });
 });
 
 test("security headers are set", async () => {
@@ -266,4 +266,71 @@ test("the inbound webhook needs the secret, only accepts known addresses, and sh
 
   await hook({ to: address, from: "Gmail Team <forwarding-noreply@google.com>", subject: "Gmail Forwarding Confirmation", text: "Confirmation code: 87654321" });
   assert.equal((await inbox()).forwardCode, "87654321");
+});
+
+test("basic sign-in asks only for identity, stores no Gmail token, and still works", async () => {
+  let requested;
+  const oauth = {
+    generateCodeVerifierAsync: async () => ({ codeVerifier: "v", codeChallenge: "c" }),
+    generateAuthUrl: (options) => ((requested = options), `https://accounts.example/auth?state=${options.state}`),
+    getToken: async () => ({ tokens: { id_token: "x", scope: "openid email" } }),
+    verifyIdToken: async () => ({ getPayload: () => ({ email: "basic@example.com", email_verified: true, sub: "s-basic" }) }),
+  };
+  const app = createApp({
+    pool,
+    services: { oauthClient: () => oauth },
+    scanner: async () => ({}),
+    config: { sessionSecret: "test", secureCookies: false, googleConfigured: true, googleClientId: "", allowedEmails: [], dailyLimit: 50 },
+  });
+  const srv = app.listen(0);
+  const url = `http://localhost:${srv.address().port}`;
+  try {
+    const start = await fetch(`${url}/auth/google?mode=basic`, { redirect: "manual" });
+    assert.deepEqual(requested.scope, ["openid", "email"]);
+    assert.equal(requested.access_type, undefined);
+    const cookie = start.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const state = new URL(start.headers.get("location")).searchParams.get("state");
+
+    const done = await fetch(`${url}/auth/google/callback?state=${state}&code=x`, { headers: { cookie }, redirect: "manual" });
+    assert.equal(done.status, 302);
+    const session = done.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const me = await (await fetch(`${url}/api/me`, { headers: { cookie: session } })).json();
+    assert.deepEqual([me.authenticated, me.connected, me.email, me.usage], [true, false, "basic@example.com", { used: 0, limit: 50 }]);
+
+    const conflicts = await (await fetch(`${url}/api/conflicts?from=2030-01-01&to=2030-12-31`, { headers: { cookie: session } })).json();
+    assert.deepEqual(conflicts, { conflicts: {} });
+
+    {
+      const second = await fetch(`${url}/auth/google`, { redirect: "manual" });
+      assert.deepEqual(requested.scope.includes("https://www.googleapis.com/auth/gmail.readonly"), true);
+      assert.equal(requested.access_type, "offline");
+      const c2 = second.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+      const s2 = new URL(second.headers.get("location")).searchParams.get("state");
+      const refused = await fetch(`${url}/auth/google/callback?state=${s2}&code=x`, { headers: { cookie: c2 } });
+      assert.equal(refused.status, 400);
+    }
+  } finally {
+    srv.close();
+  }
+});
+
+test("deleting an account removes every row for that user and ends the session", async () => {
+  const frank = (await upsertUser(pool, { email: "frank@example.com" })).id;
+  await saveToken(pool, frank, encrypt("r"));
+  await insertSuggestion(pool, frank, {
+    name: "Frank event", organizer: "A", offer: "o", start_date: "2030-08-01", end_date: null,
+    start_time: null, end_time: null, time_zone: null, url: null,
+  });
+  await pool.query("INSERT INTO scanned_emails (user_id, message_id) VALUES ($1, 'm')", [frank]);
+
+  const headers = { cookie: cookieFor(frank), "X-Requested-With": "fetch", "Content-Type": "application/json" };
+  const res = await fetch(base + "/auth/delete", { method: "POST", headers, body: "{}" });
+  assert.equal(res.status, 200);
+
+  for (const table of ["users WHERE id", "user_tokens WHERE user_id", "event_suggestions WHERE user_id", "scanned_emails WHERE user_id"]) {
+    assert.equal((await pool.query(`SELECT 1 FROM ${table} = $1`, [frank])).rows.length, 0, table);
+  }
+  const me = await (await fetch(base + "/api/me", { headers: { cookie: cookieFor(frank) } })).json();
+  assert.equal(me.authenticated, false);
+  assert.equal((await fetch(base + "/auth/delete", { method: "POST", headers: { "X-Requested-With": "fetch" }, body: "{}" })).status, 401);
 });
