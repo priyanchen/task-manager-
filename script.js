@@ -295,8 +295,9 @@ async function scanEmails() {
     const result = await api("/api/scan", { method: "POST", body: { days: 7 } });
     stopProgress();
     const note = result.rateLimited ? " Rate limit reached; click Scan emails again in a minute to continue." : "";
+    const limit = result.limited ? " Daily scan limit reached; the rest will wait until you scan again tomorrow." : "";
     const failed = result.failed ? ` ${result.failed} emails failed and will be retried.` : "";
-    statusLine.textContent = `Done. Scanned ${result.scanned} new emails, found ${result.found} events, ${result.added} new.${failed}${note}`;
+    statusLine.textContent = `Done. Scanned ${result.scanned} new emails, found ${result.found} events, ${result.added} new.${failed}${note}${limit}`;
   } catch (error) {
     stopProgress();
     statusLine.textContent = error.message;

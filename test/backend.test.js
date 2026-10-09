@@ -2,10 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDb } from "pg-mem";
 import { decrypt, encrypt } from "../server/crypto.js";
-import { initSchema, insertSuggestion, listSuggestions, setStatus } from "../server/db.js";
+import { createAnalytics } from "../server/analytics.js";
+import {
+  adoptLegacy,
+  getSuggestions,
+  getUsage,
+  initSchema,
+  insertSuggestion,
+  listSuggestions,
+  setStatus,
+  upsertUser,
+} from "../server/db.js";
 import { validateEvent } from "../server/extract.js";
 import { buildEvent, htmlToText } from "../server/google.js";
-import { runScan } from "../server/scan.js";
+import { dueScanDays, runScan } from "../server/scan.js";
 
 process.env.TOKEN_ENC_KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -28,6 +38,8 @@ async function freshPool() {
   return pool;
 }
 
+const newUser = async (pool, email = "me@example.com") => (await upsertUser(pool, { email, sub: "sub" })).id;
+
 test("tokens round-trip and are not stored in plaintext", () => {
   const encrypted = encrypt("refresh-token");
   assert.notEqual(encrypted, "refresh-token");
@@ -44,20 +56,22 @@ test("validateEvent rejects past dates and URLs that are not in the email", () =
 
 test("skipping an event does not hide a later event from the same sender", async () => {
   const pool = await freshPool();
-  assert.equal(await insertSuggestion(pool, event()), true);
-  const [first] = await listSuggestions(pool, { from: "2030-01-01", to: "2030-12-31" });
-  await setStatus(pool, first.id, "skipped");
+  const userId = await newUser(pool);
+  assert.equal(await insertSuggestion(pool, userId, event()), true);
+  const [first] = await listSuggestions(pool, userId, { from: "2030-01-01", to: "2030-12-31" });
+  await setStatus(pool, userId, first.id, "skipped");
 
-  assert.equal(await insertSuggestion(pool, event()), false);
-  assert.equal(await insertSuggestion(pool, event({ name: "Another Acme Workshop" })), true);
-  assert.equal(await insertSuggestion(pool, event({ start_date: "2030-06-01" })), true);
+  assert.equal(await insertSuggestion(pool, userId, event()), false);
+  assert.equal(await insertSuggestion(pool, userId, event({ name: "Another Acme Workshop" })), true);
+  assert.equal(await insertSuggestion(pool, userId, event({ start_date: "2030-06-01" })), true);
 
-  const visible = await listSuggestions(pool, { from: "2030-01-01", to: "2030-12-31" });
+  const visible = await listSuggestions(pool, userId, { from: "2030-01-01", to: "2030-12-31" });
   assert.deepEqual(visible.map((s) => s.name).sort(), ["AI Founders Webinar", "Another Acme Workshop"]);
 });
 
 test("runScan stores only extracted fields and never rescans a message", async () => {
   const pool = await freshPool();
+  const userId = await newUser(pool);
   const messages = {
     m1: { id: "m1", from: "Acme <a@acme.test>", subject: "Webinar: register now", text: "Join us https://zoom.us/x" },
     m2: { id: "m2", from: "Shop", subject: "Your receipt", text: "Thanks for your order" },
@@ -69,19 +83,20 @@ test("runScan stores only extracted fields and never rescans a message", async (
     return [event()];
   };
 
-  const first = await runScan({ pool, mail, extract, days: 2, today: "2030-01-01" });
-  assert.deepEqual(first, { messages: 2, scanned: 2, found: 1, added: 1, failed: 0, rateLimited: false });
+  const first = await runScan({ pool, userId, mail, extract, days: 2, today: "2030-01-01" });
+  assert.deepEqual(first, { messages: 2, scanned: 2, found: 1, added: 1, failed: 0, rateLimited: false, limited: false });
 
-  const second = await runScan({ pool, mail, extract, days: 2, today: "2030-01-01" });
+  const second = await runScan({ pool, userId, mail, extract, days: 2, today: "2030-01-01" });
   assert.equal(second.scanned, 0);
   assert.equal(extractCalls, 1);
 
-  const { rows } = await pool.query("SELECT * FROM suggestions");
+  const { rows } = await pool.query("SELECT * FROM event_suggestions");
   assert.ok(!Object.keys(rows[0]).some((column) => /body|text|subject/.test(column)));
 });
 
 test("runScan stops on a rate limit and leaves unscanned messages for the next run", async () => {
   const pool = await freshPool();
+  const userId = await newUser(pool);
   const messages = {
     m1: { id: "m1", from: "A", subject: "Webinar one", text: "register https://zoom.us/x" },
     m2: { id: "m2", from: "A", subject: "Webinar two", text: "register https://zoom.us/y" },
@@ -94,13 +109,13 @@ test("runScan stops on a rate limit and leaves unscanned messages for the next r
       return messages[id];
     },
   };
-  const first = await runScan({ pool, mail, extract: async () => [], days: 2, today: "2030-01-01" });
+  const first = await runScan({ pool, userId, mail, extract: async () => [], days: 2, today: "2030-01-01" });
   assert.equal(first.rateLimited, true);
   assert.equal(first.scanned, 1);
   assert.equal(first.failed, 0);
 
   const healthy = { ...mail, getMessage: async (id) => messages[id] };
-  const second = await runScan({ pool, mail: healthy, extract: async () => [], days: 2, today: "2030-01-01" });
+  const second = await runScan({ pool, userId, mail: healthy, extract: async () => [], days: 2, today: "2030-01-01" });
   assert.equal(second.rateLimited, false);
   assert.equal(second.scanned, 2);
 });
@@ -116,4 +131,83 @@ test("buildEvent makes timed and all-day Google Calendar events", () => {
 
 test("htmlToText keeps link targets", () => {
   assert.match(htmlToText('<p>Go <a href="https://luma.com/e?a=1&amp;b=2">here</a></p>'), /here \(https:\/\/luma\.com\/e\?a=1&b=2\)/);
+});
+
+test("two users keep separate suggestions, even for the same event", async () => {
+  const pool = await freshPool();
+  const a = await newUser(pool, "a@example.com");
+  const b = await newUser(pool, "b@example.com");
+  assert.equal(await insertSuggestion(pool, a, event()), true);
+  assert.equal(await insertSuggestion(pool, b, event()), true);
+
+  const range = { from: "2030-01-01", to: "2030-12-31" };
+  const [mine] = await listSuggestions(pool, a, range);
+  assert.equal((await listSuggestions(pool, b, range)).length, 1);
+  assert.deepEqual(await getSuggestions(pool, b, [mine.id]), []);
+
+  await setStatus(pool, b, mine.id, "skipped");
+  assert.equal((await listSuggestions(pool, a, range)).length, 1);
+});
+
+test("runScan stops at the daily limit and counts usage per user", async () => {
+  const pool = await freshPool();
+  const userId = await newUser(pool);
+  const other = await newUser(pool, "other@example.com");
+  const ids = ["m1", "m2", "m3"];
+  const mail = {
+    listIds: async () => ids,
+    getMessage: async (id) => ({ id, from: "A", subject: `Webinar ${id}`, text: "register https://zoom.us/x" }),
+  };
+  const result = await runScan({ pool, userId, mail, extract: async () => [], days: 2, today: "2030-01-01", dailyLimit: 2 });
+  assert.equal(result.limited, true);
+  assert.equal(await getUsage(pool, userId, "2030-01-01"), 2);
+  assert.equal(await getUsage(pool, other, "2030-01-01"), 0);
+
+  const next = await runScan({ pool, userId, mail, extract: async () => [], days: 2, today: "2030-01-02", dailyLimit: 2 });
+  assert.equal(next.scanned, 1);
+  assert.equal(result.scanned, 2);
+});
+
+test("daily scans are due at 06:00 local time, weekly on Sundays", () => {
+  const sundayUtc = new Date("2030-01-06T04:00:00Z");
+  assert.equal(dueScanDays("Asia/Jerusalem", sundayUtc), 8);
+  assert.equal(dueScanDays("Asia/Jerusalem", new Date("2030-01-07T04:00:00Z")), 2);
+  assert.equal(dueScanDays("Asia/Jerusalem", new Date("2030-01-07T05:00:00Z")), null);
+  assert.equal(dueScanDays("America/New_York", new Date("2030-01-07T11:00:00Z")), 2);
+});
+
+test("single-user data is adopted by the matching account only once", async () => {
+  const pool = await freshPool();
+  await pool.query("CREATE TABLE google_auth (id INTEGER PRIMARY KEY, email TEXT, refresh_token_enc TEXT)");
+  await pool.query(`CREATE TABLE suggestions (id SERIAL PRIMARY KEY, dedupe_key TEXT, name TEXT, organizer TEXT, offer TEXT,
+    start_date TEXT, end_date TEXT, start_time TEXT, end_time TEXT, time_zone TEXT, url TEXT, status TEXT, calendar_event_id TEXT)`);
+  await pool.query("CREATE TABLE scanned_messages (message_id TEXT PRIMARY KEY)");
+  await pool.query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+  await pool.query("INSERT INTO google_auth VALUES (1, 'me@example.com', 'x')");
+  await pool.query(`INSERT INTO suggestions (dedupe_key, name, organizer, offer, start_date, status)
+    VALUES ('k', 'Old event', 'Acme', 'o', '2030-05-10', 'new')`);
+  await pool.query("INSERT INTO scanned_messages VALUES ('m1')");
+  await pool.query("INSERT INTO settings VALUES ('timeZone', 'Europe/London')");
+
+  const stranger = await upsertUser(pool, { email: "stranger@example.com" });
+  assert.equal(await adoptLegacy(pool, stranger), false);
+
+  const me = await upsertUser(pool, { email: "Me@Example.com" });
+  assert.equal(await adoptLegacy(pool, me), true);
+  assert.equal((await listSuggestions(pool, me.id, { from: "2030-01-01", to: "2030-12-31" })).length, 1);
+  assert.equal(await adoptLegacy(pool, me), false);
+  assert.equal((await pool.query("SELECT time_zone FROM users WHERE id = $1", [me.id])).rows[0].time_zone, "Europe/London");
+});
+
+test("analytics sends counts under a hashed id and does nothing without a key", async () => {
+  const sent = [];
+  const send = async (url, init) => sent.push({ url, body: JSON.parse(init.body) });
+  createAnalytics({ key: "", send })(1, "x");
+  assert.equal(sent.length, 0);
+
+  createAnalytics({ key: "phc_test", send })(7, "scan_completed", { found: 2 });
+  assert.equal(sent[0].url, "https://us.i.posthog.com/capture/");
+  assert.equal(sent[0].body.event, "scan_completed");
+  assert.match(sent[0].body.distinct_id, /^[0-9a-f]{16}$/);
+  assert.equal(sent[0].body.properties.found, 2);
 });
