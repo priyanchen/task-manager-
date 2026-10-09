@@ -16,6 +16,10 @@ const statusLine = document.getElementById("status");
 const suggestionsPanel = document.getElementById("suggestions");
 const suggestionsTitle = document.getElementById("suggestions-title");
 const suggestionList = document.getElementById("suggestion-list");
+const topicsInput = document.getElementById("topics");
+const otherDetails = document.getElementById("other-suggestions");
+const otherSummary = document.getElementById("other-summary");
+const otherList = document.getElementById("other-list");
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -152,6 +156,8 @@ function renderAccount() {
   accountEmail.textContent = me.authenticated ? me.email : "";
   scanButton.hidden = !(me.authenticated && me.connected);
   timeZoneSelect.hidden = !me.authenticated;
+  topicsInput.hidden = !(me.authenticated && me.connected);
+  if (document.activeElement !== topicsInput) topicsInput.value = me.topics.join(", ");
 
   if (me.authenticated && timeZoneSelect.options.length === 0) {
     const zones = Intl.supportedValuesOf("timeZone");
@@ -191,8 +197,15 @@ function describeWhen(suggestion) {
   return [days, time].filter(Boolean).join(", ");
 }
 
+function matchesTopics(suggestion) {
+  const text = `${suggestion.name} ${suggestion.organizer} ${suggestion.offer}`.toLowerCase();
+  return me.topics.some((topic) => text.includes(topic.toLowerCase()));
+}
+
 function renderSuggestions() {
   suggestionList.replaceChildren();
+  otherList.replaceChildren();
+  otherDetails.hidden = true;
   suggestionsPanel.hidden = !(me?.authenticated && me.connected && selectedDate);
   if (suggestionsPanel.hidden) return;
 
@@ -206,7 +219,24 @@ function renderSuggestions() {
     suggestionList.append(empty);
   }
 
+  const ranked = me.topics.length > 0;
+  const matching = ranked ? forDate.filter(matchesTopics) : forDate;
+  const other = ranked ? forDate.filter((suggestion) => !matchesTopics(suggestion)) : [];
+
+  if (ranked && forDate.length > 0 && matching.length === 0) {
+    suggestionList.querySelector(".empty")?.remove();
+    const none = document.createElement("li");
+    none.className = "empty";
+    none.textContent = "No events match your topics on this date.";
+    suggestionList.append(none);
+  }
+  if (other.length > 0) {
+    otherDetails.hidden = false;
+    otherSummary.textContent = `Other (${other.length})`;
+  }
+
   for (const suggestion of forDate) {
+    const target = matching.includes(suggestion) ? suggestionList : otherList;
     const item = document.createElement("li");
     item.className = "suggestion";
 
@@ -238,14 +268,14 @@ function renderSuggestions() {
     }
 
     item.append(checkbox, body);
-    suggestionList.append(item);
+    target.append(item);
   }
 
   document.getElementById("suggestion-actions").hidden = forDate.length === 0;
 }
 
 function checkedIds() {
-  return [...suggestionList.querySelectorAll("input:checked")].map((box) => Number(box.dataset.id));
+  return [...suggestionsPanel.querySelectorAll("input[data-id]:checked")].map((box) => Number(box.dataset.id));
 }
 
 async function changeSelected(action) {
@@ -406,6 +436,18 @@ document.getElementById("next-month").addEventListener("click", () => shiftMonth
 document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
+topicsInput.addEventListener("change", async () => {
+  const topics = topicsInput.value.split(",").map((topic) => topic.trim()).filter(Boolean);
+  try {
+    await api("/api/settings", { method: "PUT", body: { topics } });
+    me.topics = topics.filter((topic, i) => topics.findIndex((t) => t.toLowerCase() === topic.toLowerCase()) === i);
+    topicsInput.value = me.topics.join(", ");
+    statusLine.textContent = me.topics.length ? "Topics saved. Matching events are listed first." : "Topics cleared.";
+    renderSuggestions();
+  } catch (error) {
+    statusLine.textContent = error.message;
+  }
+});
 timeZoneSelect.addEventListener("change", async () => {
   try {
     await api("/api/settings", { method: "PUT", body: { timeZone: timeZoneSelect.value } });

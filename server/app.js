@@ -15,6 +15,7 @@ import {
   saveToken,
   setStatus,
   setTimeZone,
+  setTopics,
   upsertUser,
 } from "./db.js";
 import { buildEvent, SCOPES } from "./google.js";
@@ -38,6 +39,13 @@ function validTimeZone(value) {
   } catch {
     return false;
   }
+}
+
+function cleanTopics(value) {
+  if (!Array.isArray(value) || value.length > 20) return null;
+  if (!value.every((topic) => typeof topic === "string" && topic.trim().length <= 40)) return null;
+  const topics = value.map((topic) => topic.trim()).filter(Boolean);
+  return topics.filter((topic, i) => topics.findIndex((t) => t.toLowerCase() === topic.toLowerCase()) === i);
 }
 
 export function createApp({ pool, services, scanner, config, track = () => {} }) {
@@ -169,13 +177,18 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       email: user?.email ?? null,
       connected: user ? Boolean(await getToken(pool, user.id)) : false,
       timeZone: user?.time_zone ?? DEFAULT_TIME_ZONE,
+      topics: user ? JSON.parse(user.topics) : [],
     });
   });
 
   app.put("/api/settings", requireAuth, async (req, res) => {
-    if (!validTimeZone(req.body?.timeZone)) return res.status(400).json({ error: "Invalid time zone" });
-    await setTimeZone(pool, req.session.userId, req.body.timeZone);
-    res.json({ timeZone: req.body.timeZone });
+    const { timeZone, topics } = req.body ?? {};
+    const cleanedTopics = topics === undefined ? undefined : cleanTopics(topics);
+    if (timeZone !== undefined && !validTimeZone(timeZone)) return res.status(400).json({ error: "Invalid time zone" });
+    if (cleanedTopics === null) return res.status(400).json({ error: "Topics must be up to 20 short words or phrases" });
+    if (timeZone !== undefined) await setTimeZone(pool, req.session.userId, timeZone);
+    if (cleanedTopics !== undefined) await setTopics(pool, req.session.userId, cleanedTopics);
+    res.json({ timeZone, topics: cleanedTopics });
   });
 
   app.get("/api/suggestions", requireAuth, async (req, res) => {

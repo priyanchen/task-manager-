@@ -14,6 +14,7 @@
       <span id="account-email"></span>
       <button type="button" id="scan-now" hidden>Scan emails</button>
       <select id="time-zone" aria-label="Time zone" hidden></select>
+      <input id="topics" type="text" placeholder="Topics you like, e.g. AI, finance" aria-label="Topics you like" autocomplete="off" hidden>
     </div>
     <p id="status" role="status"></p>
     <form id="task-form">
@@ -38,6 +39,10 @@
     <section id="suggestions" aria-label="Suggested events" hidden>
       <h2 id="suggestions-title"></h2>
       <ul id="suggestion-list"></ul>
+      <details id="other-suggestions" hidden>
+        <summary id="other-summary"></summary>
+        <ul id="other-list"></ul>
+      </details>
       <div id="suggestion-actions">
         <button type="button" id="add-selected">Add selected to calendar</button>
         <button type="button" id="skip-selected" class="secondary">Skip selected</button>
