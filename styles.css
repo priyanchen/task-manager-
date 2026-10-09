@@ -259,6 +259,11 @@ button.secondary:hover {
   transform: rotate(45deg);
 }
 
+.conflict {
+  color: #b45309;
+  font-size: 0.85rem;
+}
+
 .due {
   color: #6b7280;
   font-size: 0.8rem;

@@ -17,6 +17,7 @@ import {
   setTimeZone,
   upsertUser,
 } from "./db.js";
+import { findConflicts } from "./conflicts.js";
 import { buildEvent, SCOPES } from "./google.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -182,6 +183,24 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     const { from, to } = req.query;
     if (!DATE.test(from) || !DATE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
     res.json({ suggestions: await listSuggestions(pool, req.session.userId, { from, to }) });
+  });
+
+  app.get("/api/conflicts", requireAuth, async (req, res) => {
+    const { from, to } = req.query;
+    if (!DATE.test(from) || !DATE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+
+    const userId = req.session.userId;
+    const timed = (await listSuggestions(pool, userId, { from, to })).filter((s) => s.start_time);
+    if (timed.length === 0) return res.json({ conflicts: {} });
+
+    const calendarEvents = await services.makeCalendar(await refreshTokenFor(userId)).listBusy(from, to);
+    const { time_zone: timeZone } = await getUser(pool, userId);
+    const conflicts = {};
+    for (const s of timed) {
+      const titles = findConflicts(s, calendarEvents, timeZone);
+      if (titles.length > 0) conflicts[s.id] = titles.slice(0, 3);
+    }
+    res.json({ conflicts });
   });
 
   app.post("/api/suggestions/skip", requireAuth, async (req, res) => {

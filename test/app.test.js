@@ -3,10 +3,14 @@ import { after, before, test } from "node:test";
 import Keygrip from "keygrip";
 import { newDb } from "pg-mem";
 import { createApp } from "../server/app.js";
-import { initSchema, insertSuggestion, upsertUser } from "../server/db.js";
+import { encrypt } from "../server/crypto.js";
+import { initSchema, insertSuggestion, saveToken, upsertUser } from "../server/db.js";
+
+process.env.TOKEN_ENC_KEY = Buffer.alloc(32, 7).toString("base64");
 
 let server;
 let base;
+let busyEvents = [];
 let alice;
 let bob;
 
@@ -24,9 +28,14 @@ before(async () => {
     name: "Alice only", organizer: "Acme", offer: "o", start_date: "2030-05-10", end_date: null,
     start_time: null, end_time: null, time_zone: null, url: null,
   });
+  await saveToken(pool, alice, encrypt("refresh"));
+  await insertSuggestion(pool, alice, {
+    name: "Timed talk", organizer: "Acme", offer: "o", start_date: "2030-05-10", end_date: null,
+    start_time: "17:00", end_time: "18:00", time_zone: "Asia/Jerusalem", url: null,
+  });
   const app = createApp({
     pool,
-    services: {},
+    services: { makeCalendar: () => ({ listBusy: async () => busyEvents }) },
     scanner: async () => ({}),
     config: { sessionSecret: "test", secureCookies: false, googleConfigured: false, googleClientId: "", allowedEmails: [] },
   });
@@ -74,7 +83,7 @@ test("security headers are set", async () => {
 test("a signed-in user sees only their own suggestions and cannot skip another user's", async () => {
   const range = "/api/suggestions?from=2030-01-01&to=2030-12-31";
   const mine = await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json();
-  assert.deepEqual(mine.suggestions.map((s) => s.name), ["Alice only"]);
+  assert.deepEqual(mine.suggestions.map((s) => s.name).sort(), ["Alice only", "Timed talk"]);
 
   const theirs = await (await fetch(base + range, { headers: { cookie: cookieFor(bob) } })).json();
   assert.deepEqual(theirs.suggestions, []);
@@ -85,7 +94,7 @@ test("a signed-in user sees only their own suggestions and cannot skip another u
     body: JSON.stringify({ ids: mine.suggestions.map((s) => s.id) }),
   });
   const after = await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json();
-  assert.equal(after.suggestions.length, 1);
+  assert.equal(after.suggestions.length, 2);
 });
 
 test("/api/me returns the signed-in user's own time zone", async () => {
@@ -98,4 +107,17 @@ test("/api/me returns the signed-in user's own time zone", async () => {
   const zone = async (id) => (await (await fetch(base + "/api/me", { headers: { cookie: cookieFor(id) } })).json()).timeZone;
   assert.equal(await zone(bob), "Europe/London");
   assert.equal(await zone(alice), "Asia/Jerusalem");
+});
+
+test("/api/conflicts lists overlaps for the signed-in user only", async () => {
+  busyEvents = [{ summary: "Dentist", start: { dateTime: "2030-05-10T17:30:00+03:00" }, end: { dateTime: "2030-05-10T18:30:00+03:00" } }];
+  const range = "/api/suggestions?from=2030-01-01&to=2030-12-31";
+  const suggestions = (await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json()).suggestions;
+  const talk = suggestions.find((s) => s.name === "Timed talk");
+
+  const conflicts = async (id) =>
+    (await (await fetch(`${base}/api/conflicts?from=2030-01-01&to=2030-12-31`, { headers: { cookie: cookieFor(id) } })).json()).conflicts;
+  assert.deepEqual(await conflicts(alice), { [talk.id]: ["Dentist"] });
+  assert.deepEqual(await conflicts(bob), {});
+  assert.equal((await fetch(`${base}/api/conflicts?from=2030-01-01&to=2030-12-31`)).status, 401);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDb } from "pg-mem";
 import { decrypt, encrypt } from "../server/crypto.js";
+import { findConflicts } from "../server/conflicts.js";
 import { createAnalytics } from "../server/analytics.js";
 import {
   adoptLegacy,
@@ -210,4 +211,22 @@ test("analytics sends counts under a hashed id and does nothing without a key", 
   assert.equal(sent[0].body.event, "scan_completed");
   assert.match(sent[0].body.distinct_id, /^[0-9a-f]{16}$/);
   assert.equal(sent[0].body.properties.found, 2);
+});
+
+test("findConflicts flags overlapping timed events and ignores the rest", () => {
+  const at = (hhmm) => `2030-05-10T${hhmm}:00+03:00`;
+  const busy = (summary, from, to, extra = {}) => ({ summary, start: { dateTime: at(from) }, end: { dateTime: at(to) }, ...extra });
+  const calendar = [
+    busy("Dentist", "16:30", "17:30"),
+    busy("Lunch", "12:00", "13:00"),
+    busy("Right before", "16:00", "17:00"),
+    busy("Free slot", "17:30", "18:30", { transparency: "transparent" }),
+    busy("Declined", "17:15", "18:00", { attendees: [{ self: true, responseStatus: "declined" }] }),
+    busy("AI Founders Webinar", "17:00", "18:00"),
+    { summary: "Holiday", start: { date: "2030-05-10" }, end: { date: "2030-05-11" } },
+  ];
+  const timed = { ...event(), start_time: "17:00", end_time: "18:00", time_zone: "Asia/Jerusalem" };
+  assert.deepEqual(findConflicts(timed, calendar, "Asia/Jerusalem"), ["Dentist"]);
+  assert.deepEqual(findConflicts({ ...timed, start_time: null }, calendar, "Asia/Jerusalem"), []);
+  assert.deepEqual(findConflicts({ ...timed, time_zone: "America/New_York" }, calendar, "Asia/Jerusalem"), []);
 });
