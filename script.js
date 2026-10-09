@@ -17,6 +17,8 @@ const suggestionsPanel = document.getElementById("suggestions");
 const suggestionsTitle = document.getElementById("suggestions-title");
 const suggestionList = document.getElementById("suggestion-list");
 const topicsInput = document.getElementById("topics");
+const digestLabel = document.getElementById("digest-label");
+const digestBox = document.getElementById("digest");
 const otherDetails = document.getElementById("other-suggestions");
 const otherSummary = document.getElementById("other-summary");
 const otherList = document.getElementById("other-list");
@@ -165,6 +167,8 @@ function renderAccount() {
   scanButton.hidden = !(me.authenticated && me.connected);
   timeZoneSelect.hidden = !me.authenticated;
   topicsInput.hidden = !(me.authenticated && me.connected);
+  digestLabel.hidden = !(me.authenticated && me.connected && me.digestAvailable);
+  digestBox.checked = me.digest;
 
   if (me.authenticated && timeZoneSelect.options.length === 0) {
     const zones = Intl.supportedValuesOf("timeZone");
@@ -535,6 +539,18 @@ scanButton.addEventListener("click", scanEmails);
 topicsInput.addEventListener("input", () => {
   searchTerms = topicsInput.value.split(",").map((term) => term.trim()).filter(Boolean);
   renderSuggestions();
+});
+digestBox.addEventListener("change", async () => {
+  try {
+    await api("/api/settings", { method: "PUT", body: { digest: digestBox.checked } });
+    me.digest = digestBox.checked;
+    statusLine.textContent = me.digest
+      ? "Daily digest on. You'll get an email at 06:00 your time when events are coming up."
+      : "Daily digest off.";
+  } catch (error) {
+    statusLine.textContent = error.message;
+    digestBox.checked = me.digest;
+  }
 });
 timeZoneSelect.addEventListener("change", async () => {
   try {

@@ -226,7 +226,8 @@ button.secondary:hover {
 }
 
 #other-suggestions[hidden],
-#topics[hidden] {
+#topics[hidden],
+#digest-label[hidden] {
   display: none;
 }
 

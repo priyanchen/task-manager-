@@ -11,12 +11,15 @@ import {
   initSchema,
   insertSuggestion,
   listSuggestions,
+  saveToken,
+  setDigest,
   setStatus,
   upsertUser,
 } from "../server/db.js";
 import { validateEvent } from "../server/extract.js";
 import { buildEvent, htmlToText } from "../server/google.js";
-import { dueScanDays, runScan } from "../server/scan.js";
+import { buildDigest, createSender } from "../server/digest.js";
+import { dueScanDays, runScan, runScheduled } from "../server/scan.js";
 
 process.env.TOKEN_ENC_KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -233,4 +236,68 @@ test("findConflicts flags overlapping timed events and ignores the rest", () => 
   const hebrew = [{ summary: "תרגול ", start: { date: "2030-05-10" }, end: { date: "2030-05-11" } }];
   assert.equal(findConflicts(allDay, hebrew, "Asia/Jerusalem").duplicate, true);
   assert.equal(findConflicts({ ...allDay, start_date: "2030-05-11" }, hebrew, "Asia/Jerusalem").duplicate, false);
+});
+
+test("buildDigest lists events by day in plain text and is empty when there are none", () => {
+  assert.equal(buildDigest([], "https://app.test"), null);
+  const message = buildDigest(
+    [
+      { name: "AI\nWebinar", organizer: "Acme", offer: "Ship faster", start_date: "2030-05-10", start_time: "17:00" },
+      { name: "Retreat", organizer: "Calm Co", offer: "", start_date: "2030-05-11", start_time: null },
+    ],
+    "https://app.test",
+  );
+  assert.equal(message.subject, "2 events coming up this week");
+  assert.match(message.text, /Fri, May 10\n- 17:00 · AI Webinar — Acme\n  Ship faster\nSat, May 11\n- All day · Retreat — Calm Co/);
+  assert.match(message.text, /https:\/\/app\.test$/);
+});
+
+test("the digest is sent once a day, only to users who opted in, and only when there is something to say", async () => {
+  const pool = await freshPool();
+  const optedIn = await newUser(pool, "yes@example.com");
+  const optedOut = await newUser(pool, "no@example.com");
+  for (const id of [optedIn, optedOut]) {
+    await saveToken(pool, id, "enc");
+    await insertSuggestion(pool, id, event({ start_date: "2030-01-08" }));
+  }
+  await setDigest(pool, optedIn, true);
+
+  const sent = [];
+  const digest = { send: async (message) => sent.push(message), baseUrl: "https://app.test" };
+  const scanner = async () => ({});
+  const now = new Date("2030-01-07T04:00:00Z");
+
+  await runScheduled({ pool, scanner, now, digest });
+  assert.deepEqual(sent.map((m) => m.to), ["yes@example.com"]);
+
+  await runScheduled({ pool, scanner, now, digest });
+  assert.equal(sent.length, 1);
+
+  await runScheduled({ pool, scanner, now: new Date("2030-01-07T05:00:00Z"), digest });
+  assert.equal(sent.length, 1);
+});
+
+test("a failed digest send does not mark the day as sent", async () => {
+  const pool = await freshPool();
+  const id = await newUser(pool);
+  await saveToken(pool, id, "enc");
+  await insertSuggestion(pool, id, event({ start_date: "2030-01-08" }));
+  await setDigest(pool, id, true);
+
+  const now = new Date("2030-01-07T04:00:00Z");
+  await runScheduled({ pool, scanner: async () => ({}), now, digest: { send: async () => { throw new Error("down"); }, baseUrl: "x" } });
+  const sent = [];
+  await runScheduled({ pool, scanner: async () => ({}), now, digest: { send: async (m) => sent.push(m), baseUrl: "x" } });
+  assert.equal(sent.length, 1);
+});
+
+test("the email sender posts to the provider and is absent without a key", async () => {
+  assert.equal(createSender({ key: "" }), null);
+  let request;
+  const sender = createSender({ key: "re_test", send: async (url, init) => ((request = { url, init }), { ok: true }) });
+  await sender({ to: "me@example.com", subject: "S", text: "T" });
+  assert.equal(request.url, "https://api.resend.com/emails");
+  assert.equal(request.init.headers.Authorization, "Bearer re_test");
+  assert.deepEqual(JSON.parse(request.init.body).to, ["me@example.com"]);
+  await assert.rejects(createSender({ key: "k", send: async () => ({ ok: false, status: 403 }) })({ to: "a", subject: "s", text: "t" }), /403/);
 });

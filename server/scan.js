@@ -7,8 +7,10 @@ import {
   insertSuggestion,
   isScanned,
   listScannableUsers,
+  markDigestSent,
   markScanned,
 } from "./db.js";
+import { upcomingDigest } from "./digest.js";
 import { looksLikeEvent } from "./extract.js";
 import { isRateLimit } from "./google.js";
 
@@ -98,7 +100,7 @@ export function createScanner({ pool, services, dailyLimit = DEFAULT_DAILY_LIMIT
   };
 }
 
-export async function runScheduled({ pool, scanner, now = new Date() }) {
+export async function runScheduled({ pool, scanner, now = new Date(), digest }) {
   for (const user of await listScannableUsers(pool)) {
     const days = dueScanDays(user.time_zone, now);
     if (!days) continue;
@@ -106,6 +108,19 @@ export async function runScheduled({ pool, scanner, now = new Date() }) {
       await scanner(user.id, days);
     } catch (error) {
       console.error(`Scheduled scan skipped for user ${user.id}: ${error?.message}`);
+    }
+
+    const today = todayIn(user.time_zone, now);
+    if (!digest?.send || !user.digest_enabled || user.last_digest === today) continue;
+    try {
+      const message = await upcomingDigest(pool, user.id, today, digest.baseUrl);
+      if (message) {
+        await digest.send({ to: user.email, ...message });
+        digest.track?.(user.id, "digest_sent");
+      }
+      await markDigestSent(pool, user.id, today);
+    } catch (error) {
+      console.error(`Digest skipped for user ${user.id}: ${error?.message}`);
     }
   }
 }

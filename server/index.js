@@ -3,6 +3,7 @@ import cron from "node-cron";
 import { createAnalytics } from "./analytics.js";
 import { createApp } from "./app.js";
 import { createPool, initSchema } from "./db.js";
+import { createSender } from "./digest.js";
 import { createExtractor } from "./extract.js";
 import { createCalendar, createMail, oauthClient } from "./google.js";
 import { createScanner, DEFAULT_DAILY_LIMIT, runScheduled } from "./scan.js";
@@ -20,6 +21,7 @@ const config = {
   secureCookies: env.NODE_ENV === "production",
   googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.BASE_URL),
   googleClientId: env.GOOGLE_CLIENT_ID,
+  digestAvailable: Boolean(env.RESEND_API_KEY),
   allowedEmails: (env.ALLOWED_EMAIL ?? "")
     .split(",")
     .map((email) => email.trim().toLowerCase())
@@ -56,9 +58,11 @@ const scanner = createScanner({
 });
 const app = createApp({ pool, services, scanner, config, track });
 
+const digest = { send: createSender({ key: env.RESEND_API_KEY, from: env.DIGEST_FROM }), baseUrl: env.BASE_URL, track };
+
 if (env.SCAN_SCHEDULE !== "off") {
   cron.schedule("0 * * * *", () =>
-    runScheduled({ pool, scanner }).catch((error) => console.error(`Scheduled scans failed: ${error?.message}`)),
+    runScheduled({ pool, scanner, digest }).catch((error) => console.error(`Scheduled scans failed: ${error?.message}`)),
   );
 }
 
