@@ -25,6 +25,9 @@ const otherList = document.getElementById("other-list");
 const monthOverview = document.getElementById("month-overview");
 const monthSummary = document.getElementById("month-summary");
 const monthList = document.getElementById("month-list");
+const registrationsPanel = document.getElementById("registrations");
+const registrationsTitle = document.getElementById("registrations-title");
+const registrationList = document.getElementById("registration-list");
 const monthOther = document.getElementById("month-other");
 const monthOtherSummary = document.getElementById("month-other-summary");
 const monthOtherList = document.getElementById("month-other-list");
@@ -39,6 +42,7 @@ let me = null;
 let suggestions = [];
 let searchTerms = [];
 let conflicts = {};
+let registrations = [];
 
 function loadTasks() {
   try {
@@ -198,6 +202,62 @@ async function loadSuggestions() {
   renderCalendar();
   renderSuggestions();
   await loadConflicts(from, to);
+  await loadRegistrations(from, to);
+}
+
+async function loadRegistrations(from, to) {
+  const now = new Date();
+  const today = toDateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  try {
+    registrations = (await api(`/api/registrations?from=${from > today ? from : today}&to=${to}`)).registrations;
+  } catch {
+    registrations = [];
+  }
+  renderRegistrations();
+}
+
+function renderRegistrations() {
+  registrationList.replaceChildren();
+  registrationsPanel.hidden = !(me?.authenticated && me.connected && registrations.length > 0);
+  if (registrationsPanel.hidden) return;
+
+  registrationsTitle.textContent = `To register (${registrations.length})`;
+  for (const registration of registrations) {
+    const item = document.createElement("li");
+    item.className = "suggestion";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("aria-label", `I registered for "${registration.name}"`);
+    checkbox.addEventListener("change", () => markRegistered(registration.id));
+
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = registration.name;
+    const by = document.createElement("div");
+    by.className = "due";
+    by.textContent = `${formatDateKey(registration.start_date)} · By ${registration.organizer}`;
+    const link = document.createElement("a");
+    link.href = registration.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open registration";
+    body.append(title, by, link);
+
+    item.append(checkbox, body);
+    registrationList.append(item);
+  }
+}
+
+async function markRegistered(id) {
+  try {
+    await api("/api/registrations/done", { method: "POST", body: { ids: [id] } });
+    statusLine.textContent = "Marked as registered.";
+  } catch (error) {
+    statusLine.textContent = error.message;
+  }
+  registrations = registrations.filter((registration) => registration.id !== id);
+  renderRegistrations();
 }
 
 async function loadConflicts(from, to) {
@@ -382,6 +442,7 @@ async function changeSelected(action) {
   }
 
   const stopProgress = showProgress(action === "add" ? "Adding to Google Calendar…" : "Skipping…");
+  let needRegistration = 0;
   try {
     const result = await api(`/api/suggestions/${action}`, { method: "POST", body: { ids } });
     stopProgress();
@@ -389,10 +450,12 @@ async function changeSelected(action) {
       const done = result.results.filter((r) => r.status === "added");
       const already = done.filter((r) => r.alreadyOnCalendar).length;
       const failed = result.results.filter((r) => r.status === "error").length;
+      needRegistration = done.filter((r) => suggestions.find((s) => s.id === r.id)?.url).length;
       statusLine.textContent =
         `Added ${done.length - already} to Google Calendar` +
         `${already ? `, ${already} already on your calendar (not duplicated)` : ""}` +
-        `${failed ? `, ${failed} failed` : ""}.`;
+        `${failed ? `, ${failed} failed` : ""}.` +
+        `${needRegistration ? ` ${needRegistration} need registration; see "To register" below.` : ""}`;
     } else {
       statusLine.textContent = `Skipped ${ids.length}.`;
     }
@@ -401,6 +464,7 @@ async function changeSelected(action) {
     statusLine.textContent = error.message;
   }
   await loadSuggestions();
+  if (needRegistration > 0) registrationsPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function showProgress(message) {
@@ -536,6 +600,14 @@ document.getElementById("next-month").addEventListener("click", () => shiftMonth
 document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
+document.getElementById("copy-email").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(me.email);
+    statusLine.textContent = "Email copied.";
+  } catch {
+    statusLine.textContent = "Could not copy. Your email is " + me.email;
+  }
+});
 topicsInput.addEventListener("input", () => {
   searchTerms = topicsInput.value.split(",").map((term) => term.trim()).filter(Boolean);
   renderSuggestions();

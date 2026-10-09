@@ -260,6 +260,29 @@ button.secondary:hover {
   transform: rotate(45deg);
 }
 
+#registrations {
+  margin-top: 1.25rem;
+  padding: 0.75rem 1rem;
+  background: #fffaf0;
+  border: 1px solid #f6e0b4;
+  border-radius: 8px;
+}
+
+#registrations[hidden] {
+  display: none;
+}
+
+#registrations h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+#registration-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
 .conflict {
   color: #b45309;
   font-size: 0.85rem;
