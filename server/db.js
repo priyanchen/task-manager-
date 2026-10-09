@@ -10,6 +10,7 @@ const SCHEMA = [
     google_sub TEXT,
     time_zone TEXT NOT NULL DEFAULT '${DEFAULT_TIME_ZONE}'
   )`,
+  "ALTER TABLE users ADD COLUMN IF NOT EXISTS topics TEXT NOT NULL DEFAULT '[]'",
   `CREATE TABLE IF NOT EXISTS user_tokens (
     user_id INTEGER PRIMARY KEY,
     refresh_token_enc TEXT NOT NULL
@@ -76,12 +77,16 @@ export async function upsertUser(pool, { email, sub }) {
 }
 
 export async function getUser(pool, id) {
-  const { rows } = await pool.query("SELECT id, email, time_zone FROM users WHERE id = $1", [id]);
+  const { rows } = await pool.query("SELECT id, email, time_zone, topics FROM users WHERE id = $1", [id]);
   return rows[0] ?? null;
 }
 
 export async function setTimeZone(pool, userId, timeZone) {
   await pool.query("UPDATE users SET time_zone = $2 WHERE id = $1", [userId, timeZone]);
+}
+
+export async function setTopics(pool, userId, topics) {
+  await pool.query("UPDATE users SET topics = $2 WHERE id = $1", [userId, JSON.stringify(topics)]);
 }
 
 export async function listScannableUsers(pool) {
