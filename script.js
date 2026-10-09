@@ -7,12 +7,24 @@ const dateInput = document.getElementById("task-date");
 const monthLabel = document.getElementById("month-label");
 const grid = document.getElementById("calendar-grid");
 
+const account = document.getElementById("account");
+const signIn = document.getElementById("sign-in");
+const accountEmail = document.getElementById("account-email");
+const scanButton = document.getElementById("scan-now");
+const timeZoneSelect = document.getElementById("time-zone");
+const statusLine = document.getElementById("status");
+const suggestionsPanel = document.getElementById("suggestions");
+const suggestionsTitle = document.getElementById("suggestions-title");
+const suggestionList = document.getElementById("suggestion-list");
+
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 let tasks = loadTasks();
 let viewYear = new Date().getFullYear();
 let viewMonth = new Date().getMonth();
 let selectedDate = null;
+let me = null;
+let suggestions = [];
 
 function loadTasks() {
   try {
@@ -81,6 +93,7 @@ function renderCalendar() {
     if (key === todayKey) cell.classList.add("today");
     if (key === selectedDate) cell.classList.add("selected");
     if (count > 0) cell.classList.add("has-tasks");
+    if (suggestions.some((suggestion) => suggestion.start_date === key)) cell.classList.add("has-suggestions");
     cell.textContent = day;
     cell.setAttribute(
       "aria-label",
@@ -103,11 +116,181 @@ function shiftMonth(delta) {
   viewYear = shifted.getFullYear();
   viewMonth = shifted.getMonth();
   renderCalendar();
+  loadSuggestions();
 }
 
 function render() {
   renderCalendar();
+  renderSuggestions();
   renderTasks();
+}
+
+async function api(path, { method = "GET", body } = {}) {
+  const response = await fetch(path, {
+    method,
+    headers: { "X-Requested-With": "fetch", "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && me) {
+    me.authenticated = false;
+    renderAccount();
+    throw new Error("Google sign-in expired. Connect Google again.");
+  }
+  if (!response.ok) throw new Error(data.error ?? "Request failed");
+  return data;
+}
+
+function renderAccount() {
+  if (!me?.configured) {
+    account.hidden = true;
+    return;
+  }
+
+  account.hidden = false;
+  signIn.hidden = me.authenticated && me.connected;
+  accountEmail.textContent = me.authenticated ? me.email : "";
+  scanButton.hidden = !(me.authenticated && me.connected);
+  timeZoneSelect.hidden = !me.authenticated;
+
+  if (me.authenticated && timeZoneSelect.options.length === 0) {
+    const zones = Intl.supportedValuesOf("timeZone");
+    for (const zone of zones.includes(me.timeZone) ? zones : [me.timeZone, ...zones]) {
+      timeZoneSelect.append(new Option(zone, zone));
+    }
+  }
+  timeZoneSelect.value = me.timeZone;
+  renderSuggestions();
+}
+
+async function loadSuggestions() {
+  if (!me?.authenticated || !me.connected) {
+    suggestions = [];
+    return;
+  }
+
+  const last = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const from = toDateKey(viewYear, viewMonth, 1);
+  const to = toDateKey(viewYear, viewMonth, last);
+  try {
+    suggestions = (await api(`/api/suggestions?from=${from}&to=${to}`)).suggestions;
+  } catch (error) {
+    statusLine.textContent = error.message;
+    suggestions = [];
+  }
+  renderCalendar();
+  renderSuggestions();
+}
+
+function describeWhen(suggestion) {
+  const zone = suggestion.time_zone ?? me.timeZone;
+  const days = suggestion.end_date ? `${formatDateKey(suggestion.start_date)} to ${formatDateKey(suggestion.end_date)}` : "";
+  const time = suggestion.start_time
+    ? `${suggestion.start_time}${suggestion.end_time ? `–${suggestion.end_time}` : ""} (${zone})`
+    : "All day";
+  return [days, time].filter(Boolean).join(", ");
+}
+
+function renderSuggestions() {
+  suggestionList.replaceChildren();
+  suggestionsPanel.hidden = !(me?.authenticated && me.connected && selectedDate);
+  if (suggestionsPanel.hidden) return;
+
+  suggestionsTitle.textContent = `Suggested events on ${formatDateKey(selectedDate)}`;
+  const forDate = suggestions.filter((suggestion) => suggestion.start_date === selectedDate);
+
+  if (forDate.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No suggested events on this date.";
+    suggestionList.append(empty);
+  }
+
+  for (const suggestion of forDate) {
+    const item = document.createElement("li");
+    item.className = "suggestion";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.id = suggestion.id;
+    checkbox.setAttribute("aria-label", `Select "${suggestion.name}"`);
+
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = suggestion.name;
+    const by = document.createElement("div");
+    by.className = "due";
+    by.textContent = `By ${suggestion.organizer} · ${describeWhen(suggestion)}`;
+    body.append(title, by);
+
+    if (suggestion.offer) {
+      const offer = document.createElement("div");
+      offer.textContent = suggestion.offer;
+      body.append(offer);
+    }
+    if (suggestion.url) {
+      const link = document.createElement("a");
+      link.href = suggestion.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Registration link";
+      body.append(link);
+    }
+
+    item.append(checkbox, body);
+    suggestionList.append(item);
+  }
+
+  document.getElementById("suggestion-actions").hidden = forDate.length === 0;
+}
+
+function checkedIds() {
+  return [...suggestionList.querySelectorAll("input:checked")].map((box) => Number(box.dataset.id));
+}
+
+async function changeSelected(action) {
+  const ids = checkedIds();
+  if (ids.length === 0) {
+    statusLine.textContent = "Tick at least one event first.";
+    return;
+  }
+
+  try {
+    const result = await api(`/api/suggestions/${action}`, { method: "POST", body: { ids } });
+    if (action === "add") {
+      const added = result.results.filter((r) => r.status === "added").length;
+      const failed = result.results.filter((r) => r.status === "error").length;
+      statusLine.textContent = `Added ${added} to Google Calendar${failed ? `, ${failed} failed` : ""}.`;
+    } else {
+      statusLine.textContent = `Skipped ${ids.length}.`;
+    }
+  } catch (error) {
+    statusLine.textContent = error.message;
+  }
+  await loadSuggestions();
+}
+
+async function scanEmails() {
+  scanButton.disabled = true;
+  statusLine.textContent = "Scanning emails…";
+  try {
+    const result = await api("/api/scan", { method: "POST", body: { days: 7 } });
+    statusLine.textContent = `Scanned ${result.scanned} new emails, found ${result.found} events, ${result.added} new.`;
+  } catch (error) {
+    statusLine.textContent = error.message;
+  }
+  scanButton.disabled = false;
+  await loadSuggestions();
+}
+
+async function loadAccount() {
+  try {
+    me = await api("/api/me");
+  } catch {
+    me = null;
+  }
+  renderAccount();
+  await loadSuggestions();
 }
 
 function renderTasks() {
@@ -196,5 +379,20 @@ form.addEventListener("submit", (event) => {
 
 document.getElementById("prev-month").addEventListener("click", () => shiftMonth(-1));
 document.getElementById("next-month").addEventListener("click", () => shiftMonth(1));
+document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
+document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
+scanButton.addEventListener("click", scanEmails);
+timeZoneSelect.addEventListener("change", async () => {
+  try {
+    await api("/api/settings", { method: "PUT", body: { timeZone: timeZoneSelect.value } });
+    me.timeZone = timeZoneSelect.value;
+    statusLine.textContent = `Time zone set to ${me.timeZone}.`;
+    renderSuggestions();
+  } catch (error) {
+    statusLine.textContent = error.message;
+    timeZoneSelect.value = me.timeZone;
+  }
+});
 
 render();
+loadAccount();
