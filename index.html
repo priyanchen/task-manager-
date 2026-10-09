@@ -9,6 +9,13 @@
 <body>
   <main class="app">
     <h1>Simple Task Manager</h1>
+    <div id="account" hidden>
+      <a id="sign-in" href="/auth/google" hidden>Connect Google</a>
+      <span id="account-email"></span>
+      <button type="button" id="scan-now" hidden>Scan emails</button>
+      <select id="time-zone" aria-label="Time zone" hidden></select>
+    </div>
+    <p id="status" role="status"></p>
     <form id="task-form">
       <input
         id="task-input"
@@ -27,6 +34,14 @@
         <button type="button" id="next-month" aria-label="Next month">&rsaquo;</button>
       </div>
       <div id="calendar-grid"></div>
+    </section>
+    <section id="suggestions" aria-label="Suggested events" hidden>
+      <h2 id="suggestions-title"></h2>
+      <ul id="suggestion-list"></ul>
+      <div id="suggestion-actions">
+        <button type="button" id="add-selected">Add selected to calendar</button>
+        <button type="button" id="skip-selected" class="secondary">Skip selected</button>
+      </div>
     </section>
     <ul id="task-list"></ul>
   </main>
