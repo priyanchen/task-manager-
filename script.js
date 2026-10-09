@@ -23,6 +23,9 @@ const otherList = document.getElementById("other-list");
 const monthOverview = document.getElementById("month-overview");
 const monthSummary = document.getElementById("month-summary");
 const monthList = document.getElementById("month-list");
+const monthOther = document.getElementById("month-other");
+const monthOtherSummary = document.getElementById("month-other-summary");
+const monthOtherList = document.getElementById("month-other-list");
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -216,19 +219,14 @@ function matchesTopics(suggestion) {
   return searchTerms.some((topic) => text.includes(topic.toLowerCase()));
 }
 
-function renderMonthOverview() {
-  monthList.replaceChildren();
-  monthOverview.hidden = !(me?.authenticated && me.connected && suggestions.length > 0);
-  if (monthOverview.hidden) return;
-
-  monthSummary.textContent = `All events in ${monthLabel.textContent} (${suggestions.length})`;
+function fillMonthGroups(target, items) {
   const byDate = new Map();
-  for (const suggestion of suggestions) {
+  for (const suggestion of items) {
     byDate.set(suggestion.start_date, [...(byDate.get(suggestion.start_date) ?? []), suggestion]);
   }
 
-  for (const [date, items] of byDate) {
-    const group = document.createElement("li");
+  for (const [date, group] of byDate) {
+    const entry = document.createElement("li");
     const heading = document.createElement("button");
     heading.type = "button";
     heading.className = "secondary month-date";
@@ -239,15 +237,43 @@ function renderMonthOverview() {
     });
 
     const rows = document.createElement("ul");
-    const ordered = searchTerms.length > 0 ? [...items.filter(matchesTopics), ...items.filter((s) => !matchesTopics(s))] : items;
-    for (const suggestion of ordered) {
+    for (const suggestion of group) {
       const row = document.createElement("li");
       row.textContent = `${suggestion.start_time ?? "All day"} · ${suggestion.name} — ${suggestion.organizer}`;
-      if (searchTerms.length > 0 && !matchesTopics(suggestion)) row.className = "dim";
       rows.append(row);
     }
-    group.append(heading, rows);
-    monthList.append(group);
+    entry.append(heading, rows);
+    target.append(entry);
+  }
+}
+
+function renderMonthOverview() {
+  monthList.replaceChildren();
+  monthOtherList.replaceChildren();
+  monthOther.hidden = true;
+  monthOverview.hidden = !(me?.authenticated && me.connected && suggestions.length > 0);
+  if (monthOverview.hidden) return;
+
+  const searching = searchTerms.length > 0;
+  const matches = searching ? suggestions.filter(matchesTopics) : suggestions;
+  const others = searching ? suggestions.filter((suggestion) => !matchesTopics(suggestion)) : [];
+
+  monthSummary.textContent = searching
+    ? `Matches in ${monthLabel.textContent} (${matches.length})`
+    : `All events in ${monthLabel.textContent} (${suggestions.length})`;
+
+  if (matches.length === 0) {
+    const none = document.createElement("li");
+    none.className = "empty";
+    none.textContent = "No events match your search this month.";
+    monthList.append(none);
+  }
+  fillMonthGroups(monthList, matches);
+
+  if (others.length > 0) {
+    monthOther.hidden = false;
+    monthOtherSummary.textContent = `Other (${others.length})`;
+    fillMonthGroups(monthOtherList, others);
   }
 }
 

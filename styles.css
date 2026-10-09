@@ -279,13 +279,16 @@ button.secondary:hover {
 }
 
 #month-list,
-#month-list ul {
+#month-list ul,
+#month-other-list,
+#month-other-list ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-#month-list > li {
+#month-list > li,
+#month-other-list > li {
   margin-top: 0.75rem;
 }
 
@@ -294,7 +297,8 @@ button.secondary:hover {
   font-size: 0.85rem;
 }
 
-#month-list ul li {
+#month-list ul li,
+#month-other-list ul li {
   padding: 0.25rem 0 0 0.25rem;
   font-size: 0.9rem;
 }
@@ -303,8 +307,19 @@ button.secondary:hover {
   display: none;
 }
 
-#month-list .dim {
+#month-other {
+  margin-top: 0.75rem;
+  border-top: 1px solid #eceef2;
+}
+
+#month-other[hidden] {
+  display: none;
+}
+
+#month-other summary {
+  padding: 0.5rem 0;
   color: #6b7280;
+  cursor: pointer;
 }
 
 #task-list {
