@@ -104,7 +104,7 @@ export function createExtractor({ client, model }) {
   return async function extractEvents({ from, subject, text, today }) {
     const response = await client.messages.parse({
       model,
-      max_tokens: 4000,
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [
         {
