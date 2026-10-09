@@ -67,6 +67,7 @@ Add your domain to Cloudflare, point a proxied CNAME at the Railway domain, and 
 - Email text is sent to the Claude API to find events. Only the extracted fields are stored (name, organizer, one-line offer, dates and times, link). Email bodies are never stored, and each email is read once.
 - The Google refresh token is encrypted at rest and never reaches the browser. Sign-in uses the authorization code flow with PKCE and can be limited to `ALLOWED_EMAIL`.
 - The optional daily digest is plain text, sent only to the signed-in user's own address, at 06:00 in their time zone, and only on days with suggested events in the next 7 days. It is off until the user ticks "Email me a daily digest".
+- Registration is never automatic. After you add an event that has a link, it appears under "To register" with an Open registration button; you fill in the form on the event's own site and tick "I registered".
 - Every user's suggestions, scan history and token are stored under their own user id, and every query filters on it.
 - A link is accepted only if it appears in the email it came from.
 - "Disconnect Google" revokes the token and deletes it.

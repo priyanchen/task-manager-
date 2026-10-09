@@ -10,7 +10,9 @@ import {
   getUsage,
   initSchema,
   insertSuggestion,
+  listRegistrations,
   listSuggestions,
+  markRegistered,
   saveToken,
   setDigest,
   setStatus,
@@ -300,4 +302,28 @@ test("the email sender posts to the provider and is absent without a key", async
   assert.equal(request.init.headers.Authorization, "Bearer re_test");
   assert.deepEqual(JSON.parse(request.init.body).to, ["me@example.com"]);
   await assert.rejects(createSender({ key: "k", send: async () => ({ ok: false, status: 403 }) })({ to: "a", subject: "s", text: "t" }), /403/);
+});
+
+test("registrations list only the user's added events that have a link, until ticked", async () => {
+  const pool = await freshPool();
+  const a = await newUser(pool, "a@example.com");
+  const b = await newUser(pool, "b@example.com");
+  const range = { from: "2030-01-01", to: "2030-12-31" };
+  await insertSuggestion(pool, a, event({ name: "With link" }));
+  await insertSuggestion(pool, a, event({ name: "No link", url: null }));
+  await insertSuggestion(pool, a, event({ name: "Not added" }));
+  await insertSuggestion(pool, b, event({ name: "Other user" }));
+  const all = await listSuggestions(pool, a, range);
+  for (const s of all.filter((s) => s.name !== "Not added")) await setStatus(pool, a, s.id, "added", "cal");
+  const [otherUser] = await listSuggestions(pool, b, range);
+  await setStatus(pool, b, otherUser.id, "added", "cal");
+
+  const todo = await listRegistrations(pool, a, range);
+  assert.deepEqual(todo.map((r) => r.name), ["With link"]);
+
+  await markRegistered(pool, b, [todo[0].id]);
+  assert.equal((await listRegistrations(pool, a, range)).length, 1);
+  await markRegistered(pool, a, [todo[0].id]);
+  assert.equal((await listRegistrations(pool, a, range)).length, 0);
+  assert.equal((await listRegistrations(pool, b, range)).length, 1);
 });

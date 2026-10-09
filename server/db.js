@@ -33,6 +33,7 @@ const SCHEMA = [
     calendar_event_id TEXT,
     UNIQUE (user_id, dedupe_key)
   )`,
+  "ALTER TABLE event_suggestions ADD COLUMN IF NOT EXISTS registered BOOLEAN NOT NULL DEFAULT FALSE",
   `CREATE TABLE IF NOT EXISTS scanned_emails (
     user_id INTEGER NOT NULL,
     message_id TEXT NOT NULL,
@@ -173,6 +174,27 @@ export async function setStatus(pool, userId, id, status, calendarEventId = null
     "UPDATE event_suggestions SET status = $3, calendar_event_id = $4 WHERE id = $2 AND user_id = $1",
     [userId, id, status, calendarEventId],
   );
+}
+
+export async function listRegistrations(pool, userId, { from, to }) {
+  const { rows } = await pool.query(
+    `SELECT id, name, organizer, start_date, start_time, url
+     FROM event_suggestions
+     WHERE user_id = $1 AND status = 'added' AND registered = FALSE AND url IS NOT NULL
+       AND start_date >= $2 AND start_date <= $3
+     ORDER BY start_date, start_time, id`,
+    [userId, from, to],
+  );
+  return rows;
+}
+
+export async function markRegistered(pool, userId, ids) {
+  for (const id of ids) {
+    await pool.query(
+      "UPDATE event_suggestions SET registered = TRUE WHERE id = $2 AND user_id = $1 AND status = 'added'",
+      [userId, id],
+    );
+  }
 }
 
 export async function isScanned(pool, userId, messageId) {
