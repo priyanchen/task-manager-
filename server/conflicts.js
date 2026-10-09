@@ -31,16 +31,27 @@ function isBusy(event) {
   return !event.attendees?.some((attendee) => attendee.self && attendee.responseStatus === "declined");
 }
 
+const sameName = (event, suggestion) => event.summary?.trim().toLowerCase() === suggestion.name.trim().toLowerCase();
+
+function isDuplicate(suggestion, calendarEvents) {
+  return calendarEvents.some(
+    (event) =>
+      event.status !== "cancelled" &&
+      sameName(event, suggestion) &&
+      (event.start?.date ?? event.start?.dateTime?.slice(0, 10)) === suggestion.start_date,
+  );
+}
+
 export function findConflicts(suggestion, calendarEvents, defaultTimeZone) {
-  if (!suggestion.start_time) return [];
+  const duplicate = isDuplicate(suggestion, calendarEvents);
+  if (!suggestion.start_time) return { overlaps: [], duplicate };
   const built = buildEvent(suggestion, defaultTimeZone);
   const start = wallTimeToMs(built.start.dateTime, built.start.timeZone);
   const end = wallTimeToMs(built.end.dateTime, built.end.timeZone);
-  const name = suggestion.name.trim().toLowerCase();
-
-  return calendarEvents
+  const overlaps = calendarEvents
     .filter(isBusy)
-    .filter((event) => event.summary?.trim().toLowerCase() !== name)
+    .filter((event) => !sameName(event, suggestion))
     .filter((event) => Date.parse(event.start.dateTime) < end && start < Date.parse(event.end.dateTime))
     .map((event) => event.summary ?? "Busy");
+  return { overlaps, duplicate };
 }

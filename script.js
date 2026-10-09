@@ -266,11 +266,18 @@ function renderSuggestions() {
     by.textContent = `By ${suggestion.organizer} · ${describeWhen(suggestion)}`;
     body.append(title, by);
 
-    if (conflicts[suggestion.id]) {
-      const clash = document.createElement("div");
-      clash.className = "conflict";
-      clash.textContent = `Overlaps with: ${conflicts[suggestion.id].join(", ")}`;
-      body.append(clash);
+    const clashes = conflicts[suggestion.id];
+    if (clashes?.duplicate) {
+      const note = document.createElement("div");
+      note.className = "conflict";
+      note.textContent = "Already on your calendar";
+      body.append(note);
+    }
+    if (clashes?.overlaps.length > 0) {
+      const note = document.createElement("div");
+      note.className = "conflict";
+      note.textContent = `Overlaps with: ${clashes.overlaps.join(", ")}`;
+      body.append(note);
     }
 
     if (suggestion.offer) {
@@ -310,9 +317,13 @@ async function changeSelected(action) {
     const result = await api(`/api/suggestions/${action}`, { method: "POST", body: { ids } });
     stopProgress();
     if (action === "add") {
-      const added = result.results.filter((r) => r.status === "added").length;
+      const done = result.results.filter((r) => r.status === "added");
+      const already = done.filter((r) => r.alreadyOnCalendar).length;
       const failed = result.results.filter((r) => r.status === "error").length;
-      statusLine.textContent = `Added ${added} to Google Calendar${failed ? `, ${failed} failed` : ""}.`;
+      statusLine.textContent =
+        `Added ${done.length - already} to Google Calendar` +
+        `${already ? `, ${already} already on your calendar (not duplicated)` : ""}` +
+        `${failed ? `, ${failed} failed` : ""}.`;
     } else {
       statusLine.textContent = `Skipped ${ids.length}.`;
     }
