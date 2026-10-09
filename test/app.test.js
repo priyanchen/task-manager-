@@ -33,11 +33,6 @@ before(async () => {
     name: "Timed talk", organizer: "Acme", offer: "o", start_date: "2030-05-10", end_date: null,
     start_time: "17:00", end_time: "18:00", time_zone: "Asia/Jerusalem", url: null,
   });
-  await insertSuggestion(pool, alice, {
-    name: "Linked talk", organizer: "Acme", offer: "o", start_date: "2030-06-01", end_date: null,
-    start_time: null, end_time: null, time_zone: null, url: "https://zoom.us/webinar/register/x",
-  });
-  await pool.query("UPDATE event_suggestions SET status = 'added' WHERE name = 'Linked talk'");
   const app = createApp({
     pool,
     services: { makeCalendar: () => ({ listBusy: async () => busyEvents }) },
@@ -138,25 +133,4 @@ test("the daily digest setting is per user and must be a boolean", async () => {
   assert.equal((await put(alice, { digest: "yes" })).status, 400);
   assert.equal((await put(alice, { digest: true })).status, 200);
   assert.deepEqual([(await me(alice)).digest, (await me(bob)).digest, (await me(alice)).digestAvailable], [true, false, true]);
-});
-
-test("registration to-do list is private and can be ticked off", async () => {
-  const get = async (id) =>
-    (await (await fetch(`${base}/api/registrations?from=2030-01-01&to=2030-12-31`, { headers: { cookie: cookieFor(id) } })).json()).registrations;
-  const post = (id, ids) =>
-    fetch(base + "/api/registrations/done", {
-      method: "POST",
-      headers: { cookie: cookieFor(id), "X-Requested-With": "fetch", "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    });
-
-  const [item] = await get(alice);
-  assert.equal(item.name, "Linked talk");
-  assert.deepEqual(await get(bob), []);
-
-  await post(bob, [item.id]);
-  assert.equal((await get(alice)).length, 1);
-  assert.equal((await post(alice, "x")).status, 400);
-  await post(alice, [item.id]);
-  assert.deepEqual(await get(alice), []);
 });

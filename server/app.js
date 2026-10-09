@@ -11,9 +11,7 @@ import {
   getSuggestions,
   getToken,
   getUser,
-  listRegistrations,
   listSuggestions,
-  markRegistered,
   saveToken,
   setStatus,
   setDigest,
@@ -209,20 +207,6 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       if (overlaps.length > 0 || duplicate) conflicts[s.id] = { overlaps: overlaps.slice(0, 3), duplicate };
     }
     res.json({ conflicts });
-  });
-
-  app.get("/api/registrations", requireAuth, async (req, res) => {
-    const { from, to } = req.query;
-    if (!DATE.test(from) || !DATE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
-    res.json({ registrations: await listRegistrations(pool, req.session.userId, { from, to }) });
-  });
-
-  app.post("/api/registrations/done", requireAuth, async (req, res) => {
-    const ids = parseIds(req.body?.ids);
-    if (!ids) return res.status(400).json({ error: "ids must be a list of suggestion ids" });
-    await markRegistered(pool, req.session.userId, ids);
-    track(req.session.userId, "registration_marked", { count: ids.length });
-    res.json({ ok: true });
   });
 
   app.post("/api/suggestions/skip", requireAuth, async (req, res) => {
