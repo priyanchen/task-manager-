@@ -135,7 +135,8 @@ export function buildEvent(s, defaultTimeZone) {
     ...(s.url ? { source: { title: "Registration", url: s.url } } : {}),
   };
 
-  if (!s.start_time) {
+  const multiDayWithoutEnd = s.end_date && s.end_date !== s.start_date && !s.end_time;
+  if (!s.start_time || multiDayWithoutEnd) {
     return { ...base, start: { date: s.start_date }, end: { date: nextDay(s.end_date ?? s.start_date) } };
   }
 

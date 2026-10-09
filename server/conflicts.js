@@ -46,6 +46,7 @@ export function findConflicts(suggestion, calendarEvents, defaultTimeZone) {
   const duplicate = isDuplicate(suggestion, calendarEvents);
   if (!suggestion.start_time) return { overlaps: [], duplicate };
   const built = buildEvent(suggestion, defaultTimeZone);
+  if (!built.start.dateTime) return { overlaps: [], duplicate };
   const start = wallTimeToMs(built.start.dateTime, built.start.timeZone);
   const end = wallTimeToMs(built.end.dateTime, built.end.timeZone);
   const overlaps = calendarEvents

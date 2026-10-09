@@ -11,6 +11,7 @@ process.env.TOKEN_ENC_KEY = Buffer.alloc(32, 7).toString("base64");
 let server;
 let base;
 let busyEvents = [];
+let pool;
 let alice;
 let bob;
 
@@ -20,7 +21,7 @@ function cookieFor(userId) {
 }
 
 before(async () => {
-  const pool = new (newDb().adapters.createPg().Pool)();
+  pool = new (newDb().adapters.createPg().Pool)();
   await initSchema(pool);
   alice = (await upsertUser(pool, { email: "alice@example.com" })).id;
   bob = (await upsertUser(pool, { email: "bob@example.com" })).id;
@@ -71,7 +72,7 @@ test("state-changing requests without the CSRF header are rejected", async () =>
 
 test("/api/me reports signed-out state without leaking data", async () => {
   const body = await (await fetch(`${base}/api/me`)).json();
-  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", digest: false, digestAvailable: true });
+  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", timeZoneSet: true, digest: false, digestAvailable: true });
 });
 
 test("security headers are set", async () => {
@@ -133,4 +134,66 @@ test("the daily digest setting is per user and must be a boolean", async () => {
   assert.equal((await put(alice, { digest: "yes" })).status, 400);
   assert.equal((await put(alice, { digest: true })).status, 200);
   assert.deepEqual([(await me(alice)).digest, (await me(bob)).digest, (await me(alice)).digestAvailable], [true, false, true]);
+});
+
+test("new users start without a confirmed time zone; saving one confirms it", async () => {
+  const zone = async (id) => (await (await fetch(base + "/api/me", { headers: { cookie: cookieFor(id) } })).json()).timeZoneSet;
+  const carol = (await upsertUser(pool, { email: "carol@example.com" })).id;
+  assert.equal(await zone(carol), false);
+  await fetch(base + "/api/settings", {
+    method: "PUT",
+    headers: { cookie: cookieFor(carol), "X-Requested-With": "fetch", "Content-Type": "application/json" },
+    body: JSON.stringify({ timeZone: "America/New_York" }),
+  });
+  assert.equal(await zone(carol), true);
+});
+
+test("skip reports how many events it actually skipped", async () => {
+  const range = "/api/suggestions?from=2030-01-01&to=2030-12-31";
+  const [first] = (await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json()).suggestions;
+  const skip = async () =>
+    (
+      await (
+        await fetch(base + "/api/suggestions/skip", {
+          method: "POST",
+          headers: { cookie: cookieFor(alice), "X-Requested-With": "fetch", "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [first.id] }),
+        })
+      ).json()
+    ).skipped;
+  assert.equal(await skip(), 1);
+  assert.equal(await skip(), 0);
+});
+
+test("a sign-in callback is rejected unless this browser started the sign-in", async () => {
+  const oauth = {
+    generateCodeVerifierAsync: async () => ({ codeVerifier: "v", codeChallenge: "c" }),
+    generateAuthUrl: ({ state }) => `https://accounts.example/auth?state=${state}`,
+    getToken: async () => {
+      throw new Error("stop here");
+    },
+  };
+  const app = createApp({
+    pool,
+    services: { oauthClient: () => oauth },
+    scanner: async () => ({}),
+    config: { sessionSecret: "test", secureCookies: false, googleConfigured: true, googleClientId: "", allowedEmails: [] },
+  });
+  const srv = app.listen(0);
+  const url = `http://localhost:${srv.address().port}`;
+  try {
+    const start = await fetch(`${url}/auth/google`, { redirect: "manual" });
+    const state = new URL(start.headers.get("location")).searchParams.get("state");
+
+    const attacker = await fetch(`${url}/auth/google/callback?state=${state}&code=x`);
+    assert.equal(attacker.status, 400);
+
+    const second = await fetch(`${url}/auth/google`, { redirect: "manual" });
+    const state2 = new URL(second.headers.get("location")).searchParams.get("state");
+    const cookie2 = second.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const owner = await fetch(`${url}/auth/google/callback?state=${state2}&code=x`, { headers: { cookie: cookie2 } });
+    assert.equal(owner.status, 500);
+  } finally {
+    srv.close();
+  }
 });

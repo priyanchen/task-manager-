@@ -10,6 +10,7 @@ const SCHEMA = [
     google_sub TEXT,
     time_zone TEXT NOT NULL DEFAULT '${DEFAULT_TIME_ZONE}'
   )`,
+  "ALTER TABLE users ADD COLUMN IF NOT EXISTS time_zone_set BOOLEAN NOT NULL DEFAULT TRUE",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT FALSE",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_digest TEXT",
   `CREATE TABLE IF NOT EXISTS user_tokens (
@@ -70,7 +71,7 @@ export async function upsertUser(pool, { email, sub }) {
     await pool.query("UPDATE users SET google_sub = $2 WHERE id = $1", [found.rows[0].id, sub ?? null]);
     return getUser(pool, found.rows[0].id);
   }
-  const { rows } = await pool.query("INSERT INTO users (email, google_sub) VALUES ($1, $2) RETURNING id", [
+  const { rows } = await pool.query("INSERT INTO users (email, google_sub, time_zone_set) VALUES ($1, $2, FALSE) RETURNING id", [
     email.toLowerCase(),
     sub ?? null,
   ]);
@@ -78,12 +79,12 @@ export async function upsertUser(pool, { email, sub }) {
 }
 
 export async function getUser(pool, id) {
-  const { rows } = await pool.query("SELECT id, email, time_zone, digest_enabled, last_digest FROM users WHERE id = $1", [id]);
+  const { rows } = await pool.query("SELECT id, email, time_zone, time_zone_set, digest_enabled, last_digest FROM users WHERE id = $1", [id]);
   return rows[0] ?? null;
 }
 
 export async function setTimeZone(pool, userId, timeZone) {
-  await pool.query("UPDATE users SET time_zone = $2 WHERE id = $1", [userId, timeZone]);
+  await pool.query("UPDATE users SET time_zone = $2, time_zone_set = TRUE WHERE id = $1", [userId, timeZone]);
 }
 
 export async function setDigest(pool, userId, enabled) {
