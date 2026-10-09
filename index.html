@@ -17,8 +17,17 @@
         aria-label="New task"
         autocomplete="off"
       >
+      <input id="task-date" type="date" aria-label="Due date">
       <button type="submit">Add</button>
     </form>
+    <section id="calendar" aria-label="Calendar">
+      <div class="calendar-header">
+        <button type="button" id="prev-month" aria-label="Previous month">&lsaquo;</button>
+        <strong id="month-label"></strong>
+        <button type="button" id="next-month" aria-label="Next month">&rsaquo;</button>
+      </div>
+      <div id="calendar-grid"></div>
+    </section>
     <ul id="task-list"></ul>
   </main>
   <script src="script.js"></script>
