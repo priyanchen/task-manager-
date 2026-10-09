@@ -1,6 +1,7 @@
 import { decrypt } from "./crypto.js";
 import { getAuth, getSetting, insertSuggestion, isScanned, markScanned } from "./db.js";
 import { looksLikeEvent } from "./extract.js";
+import { isRateLimit } from "./google.js";
 
 export const DEFAULT_TIME_ZONE = "Asia/Jerusalem";
 
@@ -10,7 +11,7 @@ export function todayIn(timeZone, now = new Date()) {
 
 export async function runScan({ pool, mail, extract, days, today }) {
   const ids = await mail.listIds(days);
-  const result = { messages: ids.length, scanned: 0, found: 0, added: 0, failed: 0 };
+  const result = { messages: ids.length, scanned: 0, found: 0, added: 0, failed: 0, rateLimited: false };
 
   for (const id of ids) {
     if (await isScanned(pool, id)) continue;
@@ -34,6 +35,10 @@ export async function runScan({ pool, mail, extract, days, today }) {
       await markScanned(pool, id);
     } catch (error) {
       if (String(error?.message).includes("invalid_grant")) throw error;
+      if (isRateLimit(error)) {
+        result.rateLimited = true;
+        break;
+      }
       result.failed++;
       console.error(`Scan failed for one message: ${error?.message}`);
     }

@@ -33,6 +33,7 @@ Environment variables:
 | `ALLOWED_EMAIL` | The only Google account allowed to sign in |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth client (below) |
 | `ANTHROPIC_API_KEY` | Used to read event details out of email text |
+| `ANTHROPIC_WORKSPACE_ID` | Only if the API key is not tied to a workspace (the API then asks for an `anthropic-workspace-id` header) |
 | `EXTRACTION_MODEL` | Optional, default `claude-haiku-5-5` |
 | `NODE_ENV` | `production` on Railway (secure cookies) |
 | `SCAN_SCHEDULE` | `off` disables the daily and weekly scans |
