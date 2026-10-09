@@ -226,7 +226,11 @@ test("findConflicts flags overlapping timed events and ignores the rest", () => 
     { summary: "Holiday", start: { date: "2030-05-10" }, end: { date: "2030-05-11" } },
   ];
   const timed = { ...event(), start_time: "17:00", end_time: "18:00", time_zone: "Asia/Jerusalem" };
-  assert.deepEqual(findConflicts(timed, calendar, "Asia/Jerusalem"), ["Dentist"]);
-  assert.deepEqual(findConflicts({ ...timed, start_time: null }, calendar, "Asia/Jerusalem"), []);
-  assert.deepEqual(findConflicts({ ...timed, time_zone: "America/New_York" }, calendar, "Asia/Jerusalem"), []);
+  assert.deepEqual(findConflicts(timed, calendar, "Asia/Jerusalem"), { overlaps: ["Dentist"], duplicate: true });
+  assert.deepEqual(findConflicts({ ...timed, start_time: null, name: "Other" }, calendar, "Asia/Jerusalem"), { overlaps: [], duplicate: false });
+  assert.deepEqual(findConflicts({ ...timed, time_zone: "America/New_York" }, calendar, "Asia/Jerusalem").overlaps, []);
+  const allDay = { ...event({ name: "תרגול", start_time: null }) };
+  const hebrew = [{ summary: "תרגול ", start: { date: "2030-05-10" }, end: { date: "2030-05-11" } }];
+  assert.equal(findConflicts(allDay, hebrew, "Asia/Jerusalem").duplicate, true);
+  assert.equal(findConflicts({ ...allDay, start_date: "2030-05-11" }, hebrew, "Asia/Jerusalem").duplicate, false);
 });

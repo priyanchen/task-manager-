@@ -190,15 +190,15 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     if (!DATE.test(from) || !DATE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
 
     const userId = req.session.userId;
-    const timed = (await listSuggestions(pool, userId, { from, to })).filter((s) => s.start_time);
-    if (timed.length === 0) return res.json({ conflicts: {} });
+    const pending = await listSuggestions(pool, userId, { from, to });
+    if (pending.length === 0) return res.json({ conflicts: {} });
 
     const calendarEvents = await services.makeCalendar(await refreshTokenFor(userId)).listBusy(from, to);
     const { time_zone: timeZone } = await getUser(pool, userId);
     const conflicts = {};
-    for (const s of timed) {
-      const titles = findConflicts(s, calendarEvents, timeZone);
-      if (titles.length > 0) conflicts[s.id] = titles.slice(0, 3);
+    for (const s of pending) {
+      const { overlaps, duplicate } = findConflicts(s, calendarEvents, timeZone);
+      if (overlaps.length > 0 || duplicate) conflicts[s.id] = { overlaps: overlaps.slice(0, 3), duplicate };
     }
     res.json({ conflicts });
   });

@@ -117,7 +117,7 @@ test("/api/conflicts lists overlaps for the signed-in user only", async () => {
 
   const conflicts = async (id) =>
     (await (await fetch(`${base}/api/conflicts?from=2030-01-01&to=2030-12-31`, { headers: { cookie: cookieFor(id) } })).json()).conflicts;
-  assert.deepEqual(await conflicts(alice), { [talk.id]: ["Dentist"] });
+  assert.deepEqual(await conflicts(alice), { [talk.id]: { overlaps: ["Dentist"], duplicate: false } });
   assert.deepEqual(await conflicts(bob), {});
   assert.equal((await fetch(`${base}/api/conflicts?from=2030-01-01&to=2030-12-31`)).status, 401);
 });
