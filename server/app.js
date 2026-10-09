@@ -19,6 +19,7 @@ import {
   upsertUser,
 } from "./db.js";
 import { findConflicts } from "./conflicts.js";
+import { buildIcs } from "./ics.js";
 import { buildEvent, SCOPES } from "./google.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -211,6 +212,23 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       if (overlaps.length > 0 || duplicate) conflicts[s.id] = { overlaps: overlaps.slice(0, 3), duplicate };
     }
     res.json({ conflicts });
+  });
+
+  app.get("/api/suggestions.ics", requireAuth, async (req, res) => {
+    const ids = parseIds(String(req.query.ids ?? "").split(",").map(Number));
+    if (!ids) return res.status(400).json({ error: "ids must be a comma-separated list of suggestion ids" });
+
+    const userId = req.session.userId;
+    const found = (await getSuggestions(pool, userId, ids)).filter((s) => s.status === "new");
+    if (found.length === 0) return res.status(404).json({ error: "No matching events" });
+
+    const { time_zone: timeZone } = await getUser(pool, userId);
+    track(userId, "ics_downloaded", { count: found.length });
+    res.set({
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="events.ics"',
+    });
+    res.send(buildIcs(found, timeZone));
   });
 
   app.post("/api/suggestions/skip", requireAuth, async (req, res) => {

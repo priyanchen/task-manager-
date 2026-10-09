@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDb } from "pg-mem";
 import { decrypt, encrypt } from "../server/crypto.js";
+import { buildIcs, fold } from "../server/ics.js";
 import { findConflicts } from "../server/conflicts.js";
 import { createAnalytics } from "../server/analytics.js";
 import {
@@ -307,4 +308,35 @@ test("a multi-day event with a start time but no end time becomes an all-day spa
   assert.deepEqual([built.start.date, built.end.date], ["2030-05-10", "2030-05-13"]);
   const result = findConflicts(event({ start_time: "09:00", end_time: null, end_date: "2030-05-12" }), [], "Asia/Jerusalem");
   assert.deepEqual(result, { overlaps: [], duplicate: false });
+});
+
+test("buildIcs writes UTC times, all-day dates and escaped text", () => {
+  const base = { id: 1, dedupe_key: "a".repeat(64), organizer: "Acme", offer: "Line1\nLine2", url: "https://zoom.us/x" };
+  const timed = { ...base, name: "תרגול, Practice; x", start_date: "2030-05-10", end_date: null, start_time: "17:00", end_time: null, time_zone: "Asia/Jerusalem" };
+  const allDay = { ...base, id: 2, name: "Retreat", start_date: "2030-05-10", end_date: "2030-05-12", start_time: null, end_time: null, time_zone: null };
+  const ics = buildIcs([timed, allDay], "Asia/Jerusalem", 0);
+
+  assert.match(ics, /^BEGIN:VCALENDAR\r\n/);
+  assert.match(ics, /DTSTART:20300510T140000Z\r\nDTEND:20300510T150000Z/);
+  assert.match(ics, /DTSTART;VALUE=DATE:20300510\r\nDTEND;VALUE=DATE:20300513/);
+  assert.ok(ics.includes("SUMMARY:תרגול\\, Practice\\; x"));
+  assert.ok(ics.includes("DESCRIPTION:Line1\\nLine2\\nBy Acme\\nhttps://zoom.us/x"));
+  assert.ok(!/[^\r]\n/.test(ics));
+});
+
+test("buildIcs cannot be used to inject extra calendar lines", () => {
+  const evil = {
+    id: 3, dedupe_key: "b".repeat(64), organizer: "Evil\r\nATTENDEE:mailto:x@y.z", offer: "hi\r\nEND:VEVENT",
+    url: "https://a.example/x\r\nX-EVIL:1", name: "Name\r\nBEGIN:VALARM", start_date: "2030-05-10", end_date: null,
+    start_time: null, end_time: null, time_zone: null,
+  };
+  const lines = buildIcs([evil], "Asia/Jerusalem", 0).split("\r\n");
+  assert.equal(lines.filter((l) => l === "END:VEVENT").length, 1);
+  assert.ok(!lines.some((l) => /^(ATTENDEE|X-EVIL|BEGIN:VALARM)/.test(l)));
+});
+
+test("fold keeps every line within 75 bytes without splitting characters", () => {
+  const folded = fold("SUMMARY:" + "תרגול ".repeat(40));
+  for (const line of folded.split("\r\n")) assert.ok(new TextEncoder().encode(line).length <= 75);
+  assert.equal(folded.replace(/\r\n /g, ""), "SUMMARY:" + "תרגול ".repeat(40));
 });
