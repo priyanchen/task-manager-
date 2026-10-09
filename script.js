@@ -413,6 +413,30 @@ async function changeSelected(action) {
   await loadSuggestions();
 }
 
+async function downloadIcs() {
+  const ids = checkedIds();
+  if (ids.length === 0) {
+    statusLine.textContent = "Tick at least one event first.";
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/suggestions.ics?ids=${ids.join(",")}`);
+    if (!response.ok) throw new Error("Could not create the calendar file. Reload and try again.");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "events.ics";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    statusLine.textContent = `Downloaded ${ids.length} event${ids.length === 1 ? "" : "s"}. Open the file to add them to Apple Calendar, Outlook or any calendar app. They stay in your list until you add or skip them.`;
+  } catch (error) {
+    statusLine.textContent = error.message;
+  }
+}
+
 function showProgress(message) {
   const started = Date.now();
   const tick = () => {
@@ -560,6 +584,7 @@ form.addEventListener("submit", (event) => {
 document.getElementById("prev-month").addEventListener("click", () => shiftMonth(-1));
 document.getElementById("next-month").addEventListener("click", () => shiftMonth(1));
 document.getElementById("add-selected").addEventListener("click", () => changeSelected("add"));
+document.getElementById("download-ics").addEventListener("click", downloadIcs);
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
 topicsInput.addEventListener("input", () => {

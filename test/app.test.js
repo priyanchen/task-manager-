@@ -197,3 +197,19 @@ test("a sign-in callback is rejected unless this browser started the sign-in", a
     srv.close();
   }
 });
+
+test("/api/suggestions.ics returns the user's own events as a calendar file", async () => {
+  const range = "/api/suggestions?from=2030-01-01&to=2030-12-31";
+  const mine = (await (await fetch(base + range, { headers: { cookie: cookieFor(alice) } })).json()).suggestions;
+  const ids = mine.map((s) => s.id).join(",");
+
+  const res = await fetch(`${base}/api/suggestions.ics?ids=${ids}`, { headers: { cookie: cookieFor(alice) } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/calendar/);
+  assert.match(res.headers.get("content-disposition"), /attachment/);
+  assert.match(await res.text(), /BEGIN:VEVENT/);
+
+  assert.equal((await fetch(`${base}/api/suggestions.ics?ids=${ids}`, { headers: { cookie: cookieFor(bob) } })).status, 404);
+  assert.equal((await fetch(`${base}/api/suggestions.ics?ids=${ids}`)).status, 401);
+  assert.equal((await fetch(`${base}/api/suggestions.ics?ids=abc`, { headers: { cookie: cookieFor(alice) } })).status, 400);
+});

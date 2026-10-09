@@ -18,7 +18,7 @@ function offsetMs(utcMs, timeZone) {
   return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - utcMs;
 }
 
-function wallTimeToMs(dateTime, timeZone) {
+export function wallTimeToMs(dateTime, timeZone) {
   const [date, time] = dateTime.split("T");
   const [year, month, day] = date.split("-").map(Number);
   const [hour, minute] = time.split(":").map(Number);
