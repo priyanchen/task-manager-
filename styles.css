@@ -270,6 +270,30 @@ button.secondary:hover {
   font-size: 0.8rem;
 }
 
+#forwarding {
+  margin-top: 1.25rem;
+}
+
+#forwarding[hidden],
+#forward-code[hidden] {
+  display: none;
+}
+
+#forwarding summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#paste-text {
+  display: block;
+  width: 100%;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #c8ccd3;
+  border-radius: 8px;
+  font: inherit;
+}
+
 #month-overview {
   margin-top: 1.25rem;
 }

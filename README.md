@@ -39,6 +39,7 @@ Environment variables:
 | `SCAN_SCHEDULE` | `off` disables the daily and weekly scans |
 | `DAILY_EXTRACTION_LIMIT` | Optional, default 200. Most emails each user can have read by Claude per day |
 | `RESEND_API_KEY`, `DIGEST_FROM` | Optional. Enables the daily email digest through Resend. `DIGEST_FROM` defaults to Resend's test sender `Task Manager <onboarding@resend.dev>`, which can only deliver to the Resend account owner's own address; verify a domain in Resend to send to anyone |
+| `INBOX_DOMAIN`, `INBOUND_SECRET` | Optional, for forwarding. `INBOX_DOMAIN` is the domain that receives forwarded mail (each user gets `u<16 hex>@INBOX_DOMAIN`). `INBOUND_SECRET` protects `POST /inbound/email`, which an email provider calls as JSON with `{to, from, subject, text}` (Postmark field names also work) and an `Authorization: Bearer <secret>` header. Without a secret the webhook stays off |
 | `POSTHOG_KEY`, `POSTHOG_HOST` | Optional PostHog project key (and host, default `https://us.i.posthog.com`). Sends counts only (scan results, adds, skips) under a hashed user id; never emails or addresses |
 
 ### Google setup
@@ -68,6 +69,7 @@ Add your domain to Cloudflare, point a proxied CNAME at the Railway domain, and 
 - The Google refresh token is encrypted at rest and never reaches the browser. Sign-in uses the authorization code flow with PKCE and can be limited to `ALLOWED_EMAIL`.
 - The optional daily digest is plain text, sent only to the signed-in user's own address, at 06:00 in their time zone, and only on days with suggested events in the next 7 days. It is off until the user ticks "Email me a daily digest".
 - "Download .ics" turns ticked events into a standard calendar file for Apple Calendar, Outlook or any other calendar app. Text is escaped so email content cannot add lines to the file, and the events stay in your list until you add or skip them.
+- Forwarding preview: each user has a private forwarding address, and a box where an event email can be pasted to try the same reading step. Forwarded and pasted emails go through the same extraction as scanned ones; only the extracted fields are stored, and each email is read once. Gmail's forwarding confirmation code is picked up and shown to the user.
 - Every user's suggestions, scan history and token are stored under their own user id, and every query filters on it.
 - A link is accepted only if it appears in the email it came from.
 - "Disconnect Google" revokes the token and deletes it.
