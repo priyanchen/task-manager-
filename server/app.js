@@ -96,6 +96,7 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     const state = randomBytes(16).toString("hex");
     for (const [key, login] of pendingLogins) if (login.expires < Date.now()) pendingLogins.delete(key);
     pendingLogins.set(state, { codeVerifier, expires: Date.now() + LOGIN_TTL_MS });
+    req.session.oauthState = state;
 
     res.redirect(
       oauth.generateAuthUrl({
@@ -112,7 +113,9 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
   app.get("/auth/google/callback", async (req, res) => {
     const login = pendingLogins.get(req.query.state);
     pendingLogins.delete(req.query.state);
-    if (!login || login.expires < Date.now() || typeof req.query.code !== "string") {
+    const startedHere = Boolean(req.session?.oauthState) && req.session.oauthState === req.query.state;
+    if (req.session) req.session.oauthState = null;
+    if (!login || !startedHere || login.expires < Date.now() || typeof req.query.code !== "string") {
       return res.status(400).send("Invalid or expired sign-in attempt");
     }
 
@@ -171,6 +174,7 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       email: user?.email ?? null,
       connected: user ? Boolean(await getToken(pool, user.id)) : false,
       timeZone: user?.time_zone ?? DEFAULT_TIME_ZONE,
+      timeZoneSet: user ? user.time_zone_set : true,
       digest: Boolean(user?.digest_enabled),
       digestAvailable: Boolean(config.digestAvailable),
     });
@@ -219,7 +223,7 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       skipped++;
     }
     track(req.session.userId, "suggestions_skipped", { count: skipped });
-    res.json({ ok: true });
+    res.json({ ok: true, skipped });
   });
 
   app.post("/api/suggestions/add", requireAuth, async (req, res) => {

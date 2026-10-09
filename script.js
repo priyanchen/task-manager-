@@ -180,7 +180,10 @@ function renderAccount() {
   renderSuggestions();
 }
 
+let loadSequence = 0;
+
 async function loadSuggestions() {
+  const request = ++loadSequence;
   if (!me?.authenticated || !me.connected) {
     suggestions = [];
     return;
@@ -189,24 +192,31 @@ async function loadSuggestions() {
   const last = new Date(viewYear, viewMonth + 1, 0).getDate();
   const from = toDateKey(viewYear, viewMonth, 1);
   const to = toDateKey(viewYear, viewMonth, last);
+  let loaded;
   try {
-    suggestions = (await api(`/api/suggestions?from=${from}&to=${to}`)).suggestions;
+    loaded = (await api(`/api/suggestions?from=${from}&to=${to}`)).suggestions;
   } catch (error) {
+    if (request !== loadSequence) return;
     statusLine.textContent = error.message;
-    suggestions = [];
+    loaded = [];
   }
+  if (request !== loadSequence) return;
+  suggestions = loaded;
   renderCalendar();
   renderSuggestions();
-  await loadConflicts(from, to);
+
+  const fetched = await fetchConflicts(from, to);
+  if (request !== loadSequence) return;
+  conflicts = fetched;
+  renderSuggestions();
 }
 
-async function loadConflicts(from, to) {
+async function fetchConflicts(from, to) {
   try {
-    conflicts = (await api(`/api/conflicts?from=${from}&to=${to}`)).conflicts;
+    return (await api(`/api/conflicts?from=${from}&to=${to}`)).conflicts;
   } catch {
-    conflicts = {};
+    return {};
   }
-  renderSuggestions();
 }
 
 function describeWhen(suggestion) {
@@ -394,7 +404,7 @@ async function changeSelected(action) {
         `${already ? `, ${already} already on your calendar (not duplicated)` : ""}` +
         `${failed ? `, ${failed} failed` : ""}.`;
     } else {
-      statusLine.textContent = `Skipped ${ids.length}.`;
+      statusLine.textContent = `Skipped ${result.skipped}.`;
     }
   } catch (error) {
     stopProgress();
@@ -444,7 +454,23 @@ async function loadAccount() {
     me = null;
   }
   renderAccount();
+  await useBrowserTimeZone();
   await loadSuggestions();
+}
+
+async function useBrowserTimeZone() {
+  if (!me?.authenticated || me.timeZoneSet) return;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!zone) return;
+  try {
+    await api("/api/settings", { method: "PUT", body: { timeZone: zone } });
+    me.timeZone = zone;
+    me.timeZoneSet = true;
+    renderAccount();
+    statusLine.textContent = `Time zone set to ${zone} from your browser. You can change it in the list above.`;
+  } catch {
+    me.timeZoneSet = true;
+  }
 }
 
 function renderTasks() {

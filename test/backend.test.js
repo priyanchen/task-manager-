@@ -301,3 +301,10 @@ test("the email sender posts to the provider and is absent without a key", async
   assert.deepEqual(JSON.parse(request.init.body).to, ["me@example.com"]);
   await assert.rejects(createSender({ key: "k", send: async () => ({ ok: false, status: 403 }) })({ to: "a", subject: "s", text: "t" }), /403/);
 });
+
+test("a multi-day event with a start time but no end time becomes an all-day span", () => {
+  const built = buildEvent(event({ start_time: "09:00", end_time: null, end_date: "2030-05-12" }), "Asia/Jerusalem");
+  assert.deepEqual([built.start.date, built.end.date], ["2030-05-10", "2030-05-13"]);
+  const result = findConflicts(event({ start_time: "09:00", end_time: null, end_date: "2030-05-12" }), [], "Asia/Jerusalem");
+  assert.deepEqual(result, { overlaps: [], duplicate: false });
+});
