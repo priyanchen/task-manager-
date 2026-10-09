@@ -1,10 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import cron from "node-cron";
+import { createAnalytics } from "./analytics.js";
 import { createApp } from "./app.js";
 import { createPool, initSchema } from "./db.js";
 import { createExtractor } from "./extract.js";
 import { createCalendar, createMail, oauthClient } from "./google.js";
-import { createScanner, DEFAULT_TIME_ZONE } from "./scan.js";
+import { createScanner, DEFAULT_DAILY_LIMIT, runScheduled } from "./scan.js";
 
 const env = process.env;
 const port = Number(env.PORT ?? 3000);
@@ -17,9 +18,12 @@ if (!env.SESSION_SECRET || !env.DATABASE_URL) {
 const config = {
   sessionSecret: env.SESSION_SECRET,
   secureCookies: env.NODE_ENV === "production",
-  googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.BASE_URL && env.ALLOWED_EMAIL),
+  googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.BASE_URL),
   googleClientId: env.GOOGLE_CLIENT_ID,
-  allowedEmail: env.ALLOWED_EMAIL ?? "",
+  allowedEmails: (env.ALLOWED_EMAIL ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
 };
 
 let extractor;
@@ -43,14 +47,19 @@ const services = {
 const pool = createPool();
 await initSchema(pool);
 
-const scanner = createScanner({ pool, services });
-const app = createApp({ pool, services, scanner, config });
+const track = createAnalytics({ key: env.POSTHOG_KEY, host: env.POSTHOG_HOST });
+const scanner = createScanner({
+  pool,
+  services,
+  track,
+  dailyLimit: Number(env.DAILY_EXTRACTION_LIMIT ?? DEFAULT_DAILY_LIMIT),
+});
+const app = createApp({ pool, services, scanner, config, track });
 
 if (env.SCAN_SCHEDULE !== "off") {
-  const run = (days) => () =>
-    scanner(days).catch((error) => console.error(`Scheduled scan skipped: ${error?.message}`));
-  cron.schedule("0 6 * * *", run(2), { timezone: DEFAULT_TIME_ZONE });
-  cron.schedule("0 6 * * 0", run(8), { timezone: DEFAULT_TIME_ZONE });
+  cron.schedule("0 * * * *", () =>
+    runScheduled({ pool, scanner }).catch((error) => console.error(`Scheduled scans failed: ${error?.message}`)),
+  );
 }
 
 app.listen(port, () => console.log(`Listening on ${port}`));

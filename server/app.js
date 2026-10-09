@@ -5,17 +5,19 @@ import cookieSession from "cookie-session";
 import express from "express";
 import { decrypt, encrypt } from "./crypto.js";
 import {
-  deleteAuth,
-  getAuth,
-  getSetting,
+  adoptLegacy,
+  DEFAULT_TIME_ZONE,
+  deleteToken,
   getSuggestions,
+  getToken,
+  getUser,
   listSuggestions,
-  saveAuth,
-  setSetting,
+  saveToken,
   setStatus,
+  setTimeZone,
+  upsertUser,
 } from "./db.js";
 import { buildEvent, SCOPES } from "./google.js";
-import { DEFAULT_TIME_ZONE } from "./scan.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -38,7 +40,7 @@ function validTimeZone(value) {
   }
 }
 
-export function createApp({ pool, services, scanner, config }) {
+export function createApp({ pool, services, scanner, config, track = () => {} }) {
   const app = express();
   const pendingLogins = new Map();
 
@@ -77,12 +79,12 @@ export function createApp({ pool, services, scanner, config }) {
   }
 
   const requireAuth = (req, res, next) =>
-    req.session?.email ? next() : res.status(401).json({ error: "Sign in required" });
+    req.session?.userId ? next() : res.status(401).json({ error: "Sign in required" });
 
-  async function connectedServices() {
-    const auth = await getAuth(pool);
-    if (!auth) throw Object.assign(new Error("Google is not connected"), { status: 409 });
-    return decrypt(auth.refresh_token_enc);
+  async function refreshTokenFor(userId) {
+    const token = await getToken(pool, userId);
+    if (!token) throw Object.assign(new Error("Google is not connected"), { status: 409 });
+    return decrypt(token);
   }
 
   app.get("/auth/google", async (req, res) => {
@@ -117,7 +119,8 @@ export function createApp({ pool, services, scanner, config }) {
     const ticket = await oauth.verifyIdToken({ idToken: tokens.id_token, audience: config.googleClientId });
     const profile = ticket.getPayload();
 
-    if (!profile.email_verified || profile.email.toLowerCase() !== config.allowedEmail.toLowerCase()) {
+    const allowed = config.allowedEmails.length === 0 || config.allowedEmails.includes(profile.email.toLowerCase());
+    if (!profile.email_verified || !allowed) {
       return res.status(403).send("This Google account is not allowed");
     }
 
@@ -126,13 +129,16 @@ export function createApp({ pool, services, scanner, config }) {
       return res.status(400).send("Gmail and Calendar access are both required. Sign in again and allow both.");
     }
 
+    const user = await upsertUser(pool, { email: profile.email, sub: profile.sub });
     if (tokens.refresh_token) {
-      await saveAuth(pool, profile.email, encrypt(tokens.refresh_token));
-    } else if (!(await getAuth(pool))) {
+      await saveToken(pool, user.id, encrypt(tokens.refresh_token));
+    } else if (!(await getToken(pool, user.id))) {
       return res.status(400).send("Google did not return a refresh token. Revoke access and sign in again.");
     }
+    await adoptLegacy(pool, user);
 
-    req.session.email = profile.email;
+    req.session.userId = user.id;
+    track(user.id, "signed_in");
     res.redirect("/");
   });
 
@@ -142,48 +148,52 @@ export function createApp({ pool, services, scanner, config }) {
   });
 
   app.post("/auth/disconnect", requireAuth, async (req, res) => {
-    const auth = await getAuth(pool);
-    if (auth) {
+    const token = await getToken(pool, req.session.userId);
+    if (token) {
       try {
-        await services.oauthClient().revokeToken(decrypt(auth.refresh_token_enc));
+        await services.oauthClient().revokeToken(decrypt(token));
       } catch (error) {
         console.error(`Token revoke failed: ${error?.message}`);
       }
-      await deleteAuth(pool);
+      await deleteToken(pool, req.session.userId);
     }
     req.session = null;
     res.json({ ok: true });
   });
 
   app.get("/api/me", async (req, res) => {
-    const authenticated = Boolean(req.session?.email);
+    const user = req.session?.userId ? await getUser(pool, req.session.userId) : null;
     res.json({
       configured: config.googleConfigured,
-      authenticated,
-      email: authenticated ? req.session.email : null,
-      connected: authenticated ? Boolean(await getAuth(pool)) : false,
-      timeZone: authenticated ? await getSetting(pool, "timeZone", DEFAULT_TIME_ZONE) : DEFAULT_TIME_ZONE,
+      authenticated: Boolean(user),
+      email: user?.email ?? null,
+      connected: user ? Boolean(await getToken(pool, user.id)) : false,
+      timeZone: user?.time_zone ?? DEFAULT_TIME_ZONE,
     });
   });
 
   app.put("/api/settings", requireAuth, async (req, res) => {
     if (!validTimeZone(req.body?.timeZone)) return res.status(400).json({ error: "Invalid time zone" });
-    await setSetting(pool, "timeZone", req.body.timeZone);
+    await setTimeZone(pool, req.session.userId, req.body.timeZone);
     res.json({ timeZone: req.body.timeZone });
   });
 
   app.get("/api/suggestions", requireAuth, async (req, res) => {
     const { from, to } = req.query;
     if (!DATE.test(from) || !DATE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
-    res.json({ suggestions: await listSuggestions(pool, { from, to }) });
+    res.json({ suggestions: await listSuggestions(pool, req.session.userId, { from, to }) });
   });
 
   app.post("/api/suggestions/skip", requireAuth, async (req, res) => {
     const ids = parseIds(req.body?.ids);
     if (!ids) return res.status(400).json({ error: "ids must be a list of suggestion ids" });
-    for (const s of await getSuggestions(pool, ids)) {
-      if (s.status === "new") await setStatus(pool, s.id, "skipped");
+    let skipped = 0;
+    for (const s of await getSuggestions(pool, req.session.userId, ids)) {
+      if (s.status !== "new") continue;
+      await setStatus(pool, req.session.userId, s.id, "skipped");
+      skipped++;
     }
+    track(req.session.userId, "suggestions_skipped", { count: skipped });
     res.json({ ok: true });
   });
 
@@ -191,11 +201,12 @@ export function createApp({ pool, services, scanner, config }) {
     const ids = parseIds(req.body?.ids);
     if (!ids) return res.status(400).json({ error: "ids must be a list of suggestion ids" });
 
-    const calendar = services.makeCalendar(await connectedServices());
-    const timeZone = await getSetting(pool, "timeZone", DEFAULT_TIME_ZONE);
+    const userId = req.session.userId;
+    const calendar = services.makeCalendar(await refreshTokenFor(userId));
+    const { time_zone: timeZone } = await getUser(pool, userId);
     const results = [];
 
-    for (const s of await getSuggestions(pool, ids)) {
+    for (const s of await getSuggestions(pool, userId, ids)) {
       if (s.status !== "new") {
         results.push({ id: s.id, status: s.status });
         continue;
@@ -203,7 +214,7 @@ export function createApp({ pool, services, scanner, config }) {
       try {
         const existing = await calendar.findExisting(s);
         const eventId = existing ?? (await calendar.insert(buildEvent(s, timeZone)));
-        await setStatus(pool, s.id, "added", eventId);
+        await setStatus(pool, userId, s.id, "added", eventId);
         results.push({ id: s.id, status: "added", alreadyOnCalendar: Boolean(existing) });
       } catch (error) {
         if (isReauth(error)) throw error;
@@ -211,12 +222,13 @@ export function createApp({ pool, services, scanner, config }) {
         results.push({ id: s.id, status: "error" });
       }
     }
+    track(userId, "suggestions_added", { count: results.filter((r) => r.status === "added").length });
     res.json({ results });
   });
 
   app.post("/api/scan", requireAuth, async (req, res) => {
     const days = req.body?.days === 7 ? 8 : 2;
-    res.json(await scanner(days));
+    res.json(await scanner(req.session.userId, days));
   });
 
   app.use((error, req, res, next) => {

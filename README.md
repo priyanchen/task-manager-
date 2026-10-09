@@ -30,13 +30,15 @@ Environment variables:
 | `SESSION_SECRET` | `openssl rand -hex 32` |
 | `TOKEN_ENC_KEY` | `openssl rand -base64 32`; encrypts the stored Google token |
 | `BASE_URL` | Public URL of this app, no trailing slash |
-| `ALLOWED_EMAIL` | The only Google account allowed to sign in |
+| `ALLOWED_EMAIL` | Optional, comma-separated. When set, only these Google accounts may sign in; when empty, any account that Google lets through can |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth client (below) |
 | `ANTHROPIC_API_KEY` | Used to read event details out of email text |
 | `ANTHROPIC_WORKSPACE_ID` | Only if the API key is not tied to a workspace (the API then asks for an `anthropic-workspace-id` header) |
 | `EXTRACTION_MODEL` | Optional, default `claude-haiku-5-5` |
 | `NODE_ENV` | `production` on Railway (secure cookies) |
 | `SCAN_SCHEDULE` | `off` disables the daily and weekly scans |
+| `DAILY_EXTRACTION_LIMIT` | Optional, default 200. Most emails each user can have read by Claude per day |
+| `POSTHOG_KEY`, `POSTHOG_HOST` | Optional PostHog project key (and host, default `https://us.i.posthog.com`). Sends counts only (scan results, adds, skips) under a hashed user id; never emails or addresses |
 
 ### Google setup
 
@@ -45,12 +47,23 @@ Environment variables:
 3. Create an OAuth client of type Web application with the redirect URI `<BASE_URL>/auth/google/callback`.
 4. Put the client ID and secret in the environment variables above.
 
+Scans run hourly-checked: each user's daily scan (last 2 days) happens at 06:00 in their own time zone, and the weekly scan (last 8 days) on Sundays.
+
 While the consent screen is in testing mode, Google may expire the login after about 7 days; sign in again from the app.
+
+### Cloudflare (optional, free)
+
+Add your domain to Cloudflare, point a proxied CNAME at the Railway domain, and set SSL/TLS mode to Full (strict). Update `BASE_URL` and the Google redirect URI to the new domain.
+
+### Tests in CI
+
+`.github/workflows/test.yml` runs `npm test` on pushes and pull requests to `dev` and `main`.
 
 ## Privacy and security
 
 - Gmail access is read-only. Calendar events are created only when you tick an event and press Add.
 - Email text is sent to the Claude API to find events. Only the extracted fields are stored (name, organizer, one-line offer, dates and times, link). Email bodies are never stored, and each email is read once.
-- The Google refresh token is encrypted at rest and never reaches the browser. Sign-in uses the authorization code flow with PKCE and is limited to `ALLOWED_EMAIL`.
+- The Google refresh token is encrypted at rest and never reaches the browser. Sign-in uses the authorization code flow with PKCE and can be limited to `ALLOWED_EMAIL`.
+- Every user's suggestions, scan history and token are stored under their own user id, and every query filters on it.
 - A link is accepted only if it appears in the email it came from.
 - "Disconnect Google" revokes the token and deletes it.
