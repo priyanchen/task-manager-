@@ -352,3 +352,21 @@ test("inbound helpers read addresses, provider field names and Gmail's confirmat
   assert.equal(sameSecret("abd", "abc"), false);
   assert.equal(sameSecret("abc", ""), false);
 });
+
+test("the digest also reaches users who signed in without Google mail access", async () => {
+  const pool = await freshPool();
+  const id = await newUser(pool);
+  await insertSuggestion(pool, id, event({ start_date: "2030-01-08" }));
+  await setDigest(pool, id, true);
+
+  const sent = [];
+  let scans = 0;
+  await runScheduled({
+    pool,
+    scanner: async () => scans++,
+    now: new Date("2030-01-07T04:00:00Z"),
+    digest: { send: async (m) => sent.push(m), baseUrl: "https://app.test" },
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(scans, 0);
+});

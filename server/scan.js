@@ -6,7 +6,7 @@ import {
   getUser,
   insertSuggestion,
   isScanned,
-  listScannableUsers,
+  listUsers,
   markDigestSent,
   markScanned,
 } from "./db.js";
@@ -107,13 +107,15 @@ export function createScanner({ pool, services, dailyLimit = DEFAULT_DAILY_LIMIT
 }
 
 export async function runScheduled({ pool, scanner, now = new Date(), digest }) {
-  for (const user of await listScannableUsers(pool)) {
+  for (const user of await listUsers(pool)) {
     const days = dueScanDays(user.time_zone, now);
     if (!days) continue;
-    try {
-      await scanner(user.id, days);
-    } catch (error) {
-      console.error(`Scheduled scan skipped for user ${user.id}: ${error?.message}`);
+    if (user.has_token) {
+      try {
+        await scanner(user.id, days);
+      } catch (error) {
+        console.error(`Scheduled scan skipped for user ${user.id}: ${error?.message}`);
+      }
     }
 
     const today = todayIn(user.time_zone, now);

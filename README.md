@@ -70,6 +70,7 @@ Add your domain to Cloudflare, point a proxied CNAME at the Railway domain, and 
 - The optional daily digest is plain text, sent only to the signed-in user's own address, at 06:00 in their time zone, and only on days with suggested events in the next 7 days. It is off until the user ticks "Email me a daily digest".
 - "Download .ics" turns ticked events into a standard calendar file for Apple Calendar, Outlook or any other calendar app. Text is escaped so email content cannot add lines to the file, and the events stay in your list until you add or skip them.
 - Forwarding preview: each user has a private forwarding address, and a box where an event email can be pasted to try the same reading step. Forwarded and pasted emails go through the same extraction as scanned ones; only the extracted fields are stored, and each email is read once. Gmail's forwarding confirmation code is picked up and shown to the user.
+- Two ways to sign in: "Sign in with Google" asks only for your identity (no Gmail or Calendar access, no token stored), and works with forwarded or pasted emails and .ics downloads; "Connect Gmail & Calendar" adds inbox scanning and one-click Google Calendar adds. "Delete my account" removes every row stored for you and revokes the Google token if there is one.
 - Every user's suggestions, scan history and token are stored under their own user id, and every query filters on it.
 - A link is accepted only if it appears in the email it came from.
 - "Disconnect Google" revokes the token and deletes it.

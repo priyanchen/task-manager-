@@ -8,8 +8,10 @@ import {
   adoptLegacy,
   DEFAULT_TIME_ZONE,
   deleteToken,
+  deleteUser,
   ensureInboxToken,
   getSuggestions,
+  getUsage,
   getToken,
   getUser,
   getUserByInboxToken,
@@ -26,7 +28,7 @@ import { findConflicts } from "./conflicts.js";
 import { forwardingCode, messageKey, normalizeInbound, sameSecret, tokenFromAddress } from "./inbox.js";
 import { buildIcs } from "./ics.js";
 import { buildEvent, SCOPES } from "./google.js";
-import { ingestMessage, todayIn } from "./scan.js";
+import { DEFAULT_DAILY_LIMIT, ingestMessage, todayIn } from "./scan.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -103,14 +105,13 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     const { codeVerifier, codeChallenge } = await oauth.generateCodeVerifierAsync();
     const state = randomBytes(16).toString("hex");
     for (const [key, login] of pendingLogins) if (login.expires < Date.now()) pendingLogins.delete(key);
-    pendingLogins.set(state, { codeVerifier, expires: Date.now() + LOGIN_TTL_MS });
+    const basic = req.query.mode === "basic";
+    pendingLogins.set(state, { codeVerifier, basic, expires: Date.now() + LOGIN_TTL_MS });
     req.session.oauthState = state;
 
     res.redirect(
       oauth.generateAuthUrl({
-        access_type: "offline",
-        prompt: "consent",
-        scope: SCOPES,
+        ...(basic ? { prompt: "select_account", scope: ["openid", "email"] } : { access_type: "offline", prompt: "consent", scope: SCOPES }),
         state,
         code_challenge: codeChallenge,
         code_challenge_method: "S256",
@@ -137,16 +138,20 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       return res.status(403).send("This Google account is not allowed");
     }
 
-    const granted = String(tokens.scope ?? "");
-    if (!SCOPES.every((scope) => granted.includes(scope))) {
-      return res.status(400).send("Gmail and Calendar access are both required. Sign in again and allow both.");
+    if (!login.basic) {
+      const granted = String(tokens.scope ?? "");
+      if (!SCOPES.every((scope) => granted.includes(scope))) {
+        return res.status(400).send("Gmail and Calendar access are both required. Sign in again and allow both.");
+      }
     }
 
     const user = await upsertUser(pool, { email: profile.email, sub: profile.sub });
-    if (tokens.refresh_token) {
-      await saveToken(pool, user.id, encrypt(tokens.refresh_token));
-    } else if (!(await getToken(pool, user.id))) {
-      return res.status(400).send("Google did not return a refresh token. Revoke access and sign in again.");
+    if (!login.basic) {
+      if (tokens.refresh_token) {
+        await saveToken(pool, user.id, encrypt(tokens.refresh_token));
+      } else if (!(await getToken(pool, user.id))) {
+        return res.status(400).send("Google did not return a refresh token. Revoke access and sign in again.");
+      }
     }
     await adoptLegacy(pool, user);
 
@@ -156,6 +161,22 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
   });
 
   app.post("/auth/logout", (req, res) => {
+    req.session = null;
+    res.json({ ok: true });
+  });
+
+  app.post("/auth/delete", requireAuth, async (req, res) => {
+    const userId = req.session.userId;
+    const token = await getToken(pool, userId);
+    if (token) {
+      try {
+        await services.oauthClient().revokeToken(decrypt(token));
+      } catch (error) {
+        console.error(`Token revoke failed: ${error?.message}`);
+      }
+    }
+    track(userId, "account_deleted");
+    await deleteUser(pool, userId);
     req.session = null;
     res.json({ ok: true });
   });
@@ -185,6 +206,7 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       timeZoneSet: user ? user.time_zone_set : true,
       digest: Boolean(user?.digest_enabled),
       digestAvailable: Boolean(config.digestAvailable),
+      usage: user ? { used: await getUsage(pool, user.id, todayIn(user.time_zone)), limit: config.dailyLimit ?? DEFAULT_DAILY_LIMIT } : null,
     });
   });
 
@@ -211,7 +233,9 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     const pending = await listSuggestions(pool, userId, { from, to });
     if (pending.length === 0) return res.json({ conflicts: {} });
 
-    const calendarEvents = await services.makeCalendar(await refreshTokenFor(userId)).listBusy(from, to);
+    const token = await getToken(pool, userId);
+    if (!token) return res.json({ conflicts: {} });
+    const calendarEvents = await services.makeCalendar(decrypt(token)).listBusy(from, to);
     const { time_zone: timeZone } = await getUser(pool, userId);
     const conflicts = {};
     for (const s of pending) {

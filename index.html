@@ -10,9 +10,13 @@
   <main class="app">
     <h1>Simple Task Manager</h1>
     <div id="account" hidden>
-      <a id="sign-in" href="/auth/google" hidden>Connect Google</a>
+      <a id="sign-in" href="/auth/google?mode=basic" hidden>Sign in with Google</a>
+      <a id="connect-full" href="/auth/google" hidden></a>
       <span id="account-email"></span>
+      <span id="usage" class="due"></span>
       <button type="button" id="scan-now" hidden>Scan emails</button>
+      <button type="button" id="sign-out" class="secondary" hidden>Sign out</button>
+      <button type="button" id="delete-account" class="secondary" hidden>Delete my account</button>
       <select id="time-zone" aria-label="Time zone" hidden></select>
       <label id="digest-label" hidden><input type="checkbox" id="digest"> Email me a daily digest</label>
       <input id="topics" type="text" placeholder="Search events, e.g. AI, finance" aria-label="Search events" autocomplete="off" hidden>

@@ -115,11 +115,19 @@ export async function markDigestSent(pool, userId, day) {
   await pool.query("UPDATE users SET last_digest = $2 WHERE id = $1", [userId, day]);
 }
 
-export async function listScannableUsers(pool) {
+export async function listUsers(pool) {
   const { rows } = await pool.query(
-    "SELECT u.id, u.email, u.time_zone, u.digest_enabled, u.last_digest FROM users u JOIN user_tokens t ON t.user_id = u.id ORDER BY u.id",
+    `SELECT u.id, u.email, u.time_zone, u.digest_enabled, u.last_digest, (t.user_id IS NOT NULL) AS has_token
+     FROM users u LEFT JOIN user_tokens t ON t.user_id = u.id ORDER BY u.id`,
   );
   return rows;
+}
+
+export async function deleteUser(pool, userId) {
+  for (const table of ["user_tokens", "event_suggestions", "scanned_emails", "extraction_usage"]) {
+    await pool.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+  }
+  await pool.query("DELETE FROM users WHERE id = $1", [userId]);
 }
 
 export async function saveToken(pool, userId, refreshTokenEnc) {
