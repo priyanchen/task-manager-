@@ -30,6 +30,7 @@ let selectedDate = null;
 let me = null;
 let suggestions = [];
 let searchTerms = [];
+let conflicts = {};
 
 function loadTasks() {
   try {
@@ -186,6 +187,16 @@ async function loadSuggestions() {
   }
   renderCalendar();
   renderSuggestions();
+  await loadConflicts(from, to);
+}
+
+async function loadConflicts(from, to) {
+  try {
+    conflicts = (await api(`/api/conflicts?from=${from}&to=${to}`)).conflicts;
+  } catch {
+    conflicts = {};
+  }
+  renderSuggestions();
 }
 
 function describeWhen(suggestion) {
@@ -254,6 +265,13 @@ function renderSuggestions() {
     by.className = "due";
     by.textContent = `By ${suggestion.organizer} · ${describeWhen(suggestion)}`;
     body.append(title, by);
+
+    if (conflicts[suggestion.id]) {
+      const clash = document.createElement("div");
+      clash.className = "conflict";
+      clash.textContent = `Overlaps with: ${conflicts[suggestion.id].join(", ")}`;
+      body.append(clash);
+    }
 
     if (suggestion.offer) {
       const offer = document.createElement("div");

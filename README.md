@@ -62,6 +62,7 @@ Add your domain to Cloudflare, point a proxied CNAME at the Railway domain, and 
 ## Privacy and security
 
 - Gmail access is read-only. Calendar events are created only when you tick an event and press Add.
+- Suggested events that overlap something already on your calendar show "Overlaps with: ...". Your calendar is read for this when you open a month, and the titles are shown to you but never stored.
 - Email text is sent to the Claude API to find events. Only the extracted fields are stored (name, organizer, one-line offer, dates and times, link). Email bodies are never stored, and each email is read once.
 - The Google refresh token is encrypted at rest and never reaches the browser. Sign-in uses the authorization code flow with PKCE and can be limited to `ALLOWED_EMAIL`.
 - Every user's suggestions, scan history and token are stored under their own user id, and every query filters on it.

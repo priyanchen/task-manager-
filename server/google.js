@@ -115,7 +115,7 @@ export function createMail(refreshToken) {
 
 const pad = (n) => String(n).padStart(2, "0");
 
-function shiftDay(date, delta) {
+export function shiftDay(date, delta) {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + delta);
   return d.toISOString().slice(0, 10);
@@ -168,6 +168,26 @@ export function createCalendar(refreshToken) {
         (item) => item.summary?.trim().toLowerCase() === s.name.trim().toLowerCase(),
       );
       return match?.id ?? null;
+    },
+
+    async listBusy(from, to) {
+      const events = [];
+      let pageToken;
+      for (let page = 0; page < 4; page++) {
+        const { data } = await calendar.events.list({
+          calendarId: "primary",
+          timeMin: `${shiftDay(from, -1)}T00:00:00Z`,
+          timeMax: `${shiftDay(to, 2)}T00:00:00Z`,
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 250,
+          pageToken,
+        });
+        events.push(...(data.items ?? []));
+        pageToken = data.nextPageToken;
+        if (!pageToken) break;
+      }
+      return events;
     },
 
     async insert(event) {
