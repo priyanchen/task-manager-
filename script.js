@@ -25,6 +25,11 @@ const otherList = document.getElementById("other-list");
 const monthOverview = document.getElementById("month-overview");
 const monthSummary = document.getElementById("month-summary");
 const monthList = document.getElementById("month-list");
+const forwarding = document.getElementById("forwarding");
+const forwardAddress = document.getElementById("forward-address");
+const forwardCode = document.getElementById("forward-code");
+const pasteText = document.getElementById("paste-text");
+const pasteFind = document.getElementById("paste-find");
 const monthOther = document.getElementById("month-other");
 const monthOtherSummary = document.getElementById("month-other-summary");
 const monthOtherList = document.getElementById("month-other-list");
@@ -480,6 +485,47 @@ async function loadAccount() {
   renderAccount();
   await useBrowserTimeZone();
   await loadSuggestions();
+  await loadInbox();
+}
+
+async function loadInbox() {
+  forwarding.hidden = !me?.authenticated;
+  if (forwarding.hidden) return;
+  try {
+    const inbox = await api("/api/inbox");
+    forwardAddress.textContent = inbox.address
+      ? `Your forwarding address: ${inbox.address}`
+      : "Your forwarding address appears here once the email domain is connected. You can already try the same reading step below.";
+    forwardCode.hidden = !inbox.forwardCode;
+    forwardCode.textContent = inbox.forwardCode ? `Gmail confirmation code: ${inbox.forwardCode}` : "";
+  } catch {
+    forwarding.hidden = true;
+  }
+}
+
+async function findEventsInPastedEmail() {
+  const text = pasteText.value.trim();
+  if (text.length < 20) {
+    statusLine.textContent = "Paste the full email text first.";
+    return;
+  }
+
+  pasteFind.disabled = true;
+  const stopProgress = showProgress("Reading the email for events…");
+  try {
+    const result = await api("/api/inbox/test", { method: "POST", body: { text } });
+    stopProgress();
+    if (result.duplicate) statusLine.textContent = "That email was already read.";
+    else if (result.limited) statusLine.textContent = "Daily limit reached. Try again tomorrow.";
+    else if (!result.looksLikeEvent) statusLine.textContent = "That does not look like an event invitation, so it was skipped.";
+    else statusLine.textContent = `Found ${result.found} event${result.found === 1 ? "" : "s"}, ${result.added} new. Open the event's date in the calendar to see it.`;
+    if (!result.duplicate && !result.limited) pasteText.value = "";
+  } catch (error) {
+    stopProgress();
+    statusLine.textContent = error.message;
+  }
+  pasteFind.disabled = false;
+  await loadSuggestions();
 }
 
 async function useBrowserTimeZone() {
@@ -587,6 +633,7 @@ document.getElementById("add-selected").addEventListener("click", () => changeSe
 document.getElementById("download-ics").addEventListener("click", downloadIcs);
 document.getElementById("skip-selected").addEventListener("click", () => changeSelected("skip"));
 scanButton.addEventListener("click", scanEmails);
+pasteFind.addEventListener("click", findEventsInPastedEmail);
 topicsInput.addEventListener("input", () => {
   searchTerms = topicsInput.value.split(",").map((term) => term.trim()).filter(Boolean);
   renderSuggestions();

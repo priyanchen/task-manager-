@@ -340,3 +340,15 @@ test("fold keeps every line within 75 bytes without splitting characters", () =>
   for (const line of folded.split("\r\n")) assert.ok(new TextEncoder().encode(line).length <= 75);
   assert.equal(folded.replace(/\r\n /g, ""), "SUMMARY:" + "תרגול ".repeat(40));
 });
+
+test("inbound helpers read addresses, provider field names and Gmail's confirmation code", async () => {
+  const { forwardingCode, normalizeInbound, sameSecret, tokenFromAddress } = await import("../server/inbox.js");
+  assert.equal(tokenFromAddress("Me <U0123456789ABCDEF@in.example.com>"), "u0123456789abcdef");
+  assert.equal(tokenFromAddress("someone@example.com"), null);
+  assert.equal(normalizeInbound({ To: "a@b.c", From: "x", Subject: "S", HtmlBody: "<p>Hello <a href=\"https://z.us/1\">here</a></p>" }).text, "Hello here (https://z.us/1)");
+  assert.equal(forwardingCode("forwarding-noreply@google.com", "Confirmation code: 12345678"), "12345678");
+  assert.equal(forwardingCode("attacker@evil.test", "Confirmation code: 12345678"), null);
+  assert.equal(sameSecret("abc", "abc"), true);
+  assert.equal(sameSecret("abd", "abc"), false);
+  assert.equal(sameSecret("abc", ""), false);
+});

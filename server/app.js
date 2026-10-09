@@ -8,19 +8,25 @@ import {
   adoptLegacy,
   DEFAULT_TIME_ZONE,
   deleteToken,
+  ensureInboxToken,
   getSuggestions,
   getToken,
   getUser,
+  getUserByInboxToken,
+  isScanned,
   listSuggestions,
   saveToken,
   setStatus,
   setDigest,
+  setForwardCode,
   setTimeZone,
   upsertUser,
 } from "./db.js";
 import { findConflicts } from "./conflicts.js";
+import { forwardingCode, messageKey, normalizeInbound, sameSecret, tokenFromAddress } from "./inbox.js";
 import { buildIcs } from "./ics.js";
 import { buildEvent, SCOPES } from "./google.js";
+import { ingestMessage, todayIn } from "./scan.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -49,7 +55,8 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
 
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "10kb" }));
+  app.use("/inbound", express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "64kb" }));
   app.use(
     cookieSession({
       name: "session",
@@ -71,7 +78,7 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
   });
 
   app.use((req, res, next) => {
-    if (req.method !== "GET" && req.get("X-Requested-With") !== "fetch") {
+    if (req.method !== "GET" && !req.path.startsWith("/inbound/") && req.get("X-Requested-With") !== "fetch") {
       return res.status(403).json({ error: "Forbidden" });
     }
     next();
@@ -271,6 +278,59 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
     }
     track(userId, "suggestions_added", { count: results.filter((r) => r.status === "added").length });
     res.json({ results });
+  });
+
+  app.get("/api/inbox", requireAuth, async (req, res) => {
+    const token = await ensureInboxToken(pool, req.session.userId);
+    const user = await getUser(pool, req.session.userId);
+    res.json({
+      address: config.inboxDomain ? `${token}@${config.inboxDomain}` : null,
+      forwardCode: user.forward_code,
+    });
+  });
+
+  app.post("/api/inbox/test", requireAuth, async (req, res) => {
+    const body = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (body.length < 20) return res.status(400).json({ error: "Paste the full email text first." });
+
+    const userId = req.session.userId;
+    const message = {
+      from: String(req.body.from ?? "pasted email").slice(0, 200),
+      subject: String(req.body.subject ?? "").slice(0, 300),
+      text: body.slice(0, 8000),
+    };
+    const id = messageKey("paste", message);
+    if (await isScanned(pool, userId, id)) return res.json({ duplicate: true, found: 0, added: 0 });
+
+    const { time_zone: timeZone } = await getUser(pool, userId);
+    const outcome = await ingestMessage({ pool, userId, extract: services.extract, message, id, today: todayIn(timeZone), dailyLimit: config.dailyLimit });
+    track(userId, "inbox_test", { found: outcome.found, added: outcome.added });
+    res.json(outcome);
+  });
+
+  app.post("/inbound/email", async (req, res) => {
+    const bearer = /^Bearer (.+)$/.exec(req.get("Authorization") ?? "")?.[1];
+    if (!sameSecret(bearer, config.inboundSecret)) return res.status(401).json({ error: "Unauthorized" });
+
+    const message = normalizeInbound(req.body);
+    const token = tokenFromAddress(message.to);
+    const user = token ? await getUserByInboxToken(pool, token) : null;
+    if (!user) return res.json({ ignored: true });
+
+    const code = forwardingCode(message.from, message.text);
+    if (code) {
+      await setForwardCode(pool, user.id, code);
+      return res.json({ ok: true, confirmation: true });
+    }
+
+    const id = messageKey("fwd", message);
+    if (await isScanned(pool, user.id, id)) return res.json({ duplicate: true });
+    const outcome = await ingestMessage({
+      pool, userId: user.id, extract: services.extract, message, id,
+      today: todayIn(user.time_zone), dailyLimit: config.dailyLimit,
+    });
+    track(user.id, "inbound_email", { found: outcome.found, added: outcome.added });
+    res.json({ ok: true, found: outcome.found, added: outcome.added });
   });
 
   app.post("/api/scan", requireAuth, async (req, res) => {

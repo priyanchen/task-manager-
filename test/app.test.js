@@ -36,9 +36,14 @@ before(async () => {
   });
   const app = createApp({
     pool,
-    services: { makeCalendar: () => ({ listBusy: async () => busyEvents }) },
+    services: {
+      makeCalendar: () => ({ listBusy: async () => busyEvents }),
+      extract: async () => [
+        { name: "Inbox webinar", organizer: "Acme", offer: "o", start_date: "2030-07-01", end_date: null, start_time: "10:00", end_time: null, time_zone: null, url: null },
+      ],
+    },
     scanner: async () => ({}),
-    config: { sessionSecret: "test", secureCookies: false, googleConfigured: false, googleClientId: "", digestAvailable: true, allowedEmails: [] },
+    config: { sessionSecret: "test", secureCookies: false, googleConfigured: false, googleClientId: "", digestAvailable: true, inboxDomain: "in.test", inboundSecret: "s3cret", allowedEmails: [] },
   });
   server = app.listen(0);
   base = `http://localhost:${server.address().port}`;
@@ -212,4 +217,53 @@ test("/api/suggestions.ics returns the user's own events as a calendar file", as
   assert.equal((await fetch(`${base}/api/suggestions.ics?ids=${ids}`, { headers: { cookie: cookieFor(bob) } })).status, 404);
   assert.equal((await fetch(`${base}/api/suggestions.ics?ids=${ids}`)).status, 401);
   assert.equal((await fetch(`${base}/api/suggestions.ics?ids=abc`, { headers: { cookie: cookieFor(alice) } })).status, 400);
+});
+
+test("pasting an email runs the same reading step and never reads it twice", async () => {
+  const dave = (await upsertUser(pool, { email: "dave@example.com" })).id;
+  const post = (body) =>
+    fetch(base + "/api/inbox/test", {
+      method: "POST",
+      headers: { cookie: cookieFor(dave), "X-Requested-With": "fetch", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const email = { text: "You are invited to our webinar on July 1. Register now at https://zoom.us/x" };
+
+  assert.equal((await post({ text: "short" })).status, 400);
+  assert.equal((await fetch(base + "/api/inbox/test", { method: "POST", headers: { "X-Requested-With": "fetch", "Content-Type": "application/json" }, body: "{}" })).status, 401);
+
+  const first = await (await post(email)).json();
+  assert.deepEqual([first.found, first.added], [1, 1]);
+  assert.equal((await (await post(email)).json()).duplicate, true);
+  assert.equal((await (await post({ text: "Thanks for your order, it ships on Monday to your address." })).json()).looksLikeEvent, false);
+});
+
+test("the inbound webhook needs the secret, only accepts known addresses, and shows Gmail's code", async () => {
+  const erin = (await upsertUser(pool, { email: "erin@example.com" })).id;
+  const inbox = async () =>
+    (await (await fetch(base + "/api/inbox", { headers: { cookie: cookieFor(erin) } })).json());
+  const { address } = await inbox();
+  assert.match(address, /^u[0-9a-f]{16}@in\.test$/);
+
+  const hook = (body, secret = "s3cret") =>
+    fetch(base + "/inbound/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(secret ? { Authorization: `Bearer ${secret}` } : {}) },
+      body: JSON.stringify(body),
+    });
+  const mail = { to: `Me <${address}>`, from: "Acme <hi@acme.test>", subject: "Webinar: register now", text: "Join our webinar https://zoom.us/x to register" };
+
+  assert.equal((await hook(mail, "wrong")).status, 401);
+  assert.equal((await hook(mail, "")).status, 401);
+  assert.equal((await (await hook({ ...mail, to: "u0000000000000000@in.test" })).json()).ignored, true);
+
+  const ok = await (await hook(mail)).json();
+  assert.deepEqual([ok.found, ok.added], [1, 1]);
+  assert.equal((await (await hook(mail)).json()).duplicate, true);
+
+  const postmark = { To: address, From: "hi@acme.test", Subject: "Webinar two: register", TextBody: "Another webinar, register here https://zoom.us/y" };
+  assert.equal((await (await hook(postmark)).json()).ok, true);
+
+  await hook({ to: address, from: "Gmail Team <forwarding-noreply@google.com>", subject: "Gmail Forwarding Confirmation", text: "Confirmation code: 87654321" });
+  assert.equal((await inbox()).forwardCode, "87654321");
 });

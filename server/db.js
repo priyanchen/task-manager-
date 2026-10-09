@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 
 export const DEFAULT_TIME_ZONE = "Asia/Jerusalem";
@@ -11,6 +11,9 @@ const SCHEMA = [
     time_zone TEXT NOT NULL DEFAULT '${DEFAULT_TIME_ZONE}'
   )`,
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS time_zone_set BOOLEAN NOT NULL DEFAULT TRUE",
+  "ALTER TABLE users ADD COLUMN IF NOT EXISTS inbox_token TEXT",
+  "ALTER TABLE users ADD COLUMN IF NOT EXISTS forward_code TEXT",
+  "CREATE UNIQUE INDEX IF NOT EXISTS users_inbox_token ON users (inbox_token)",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT FALSE",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_digest TEXT",
   `CREATE TABLE IF NOT EXISTS user_tokens (
@@ -79,12 +82,29 @@ export async function upsertUser(pool, { email, sub }) {
 }
 
 export async function getUser(pool, id) {
-  const { rows } = await pool.query("SELECT id, email, time_zone, time_zone_set, digest_enabled, last_digest FROM users WHERE id = $1", [id]);
+  const { rows } = await pool.query("SELECT id, email, time_zone, time_zone_set, digest_enabled, last_digest, inbox_token, forward_code FROM users WHERE id = $1", [id]);
   return rows[0] ?? null;
 }
 
 export async function setTimeZone(pool, userId, timeZone) {
   await pool.query("UPDATE users SET time_zone = $2, time_zone_set = TRUE WHERE id = $1", [userId, timeZone]);
+}
+
+export async function ensureInboxToken(pool, userId) {
+  const user = await getUser(pool, userId);
+  if (user.inbox_token) return user.inbox_token;
+  const token = `u${randomBytes(8).toString("hex")}`;
+  await pool.query("UPDATE users SET inbox_token = $2 WHERE id = $1 AND inbox_token IS NULL", [userId, token]);
+  return (await getUser(pool, userId)).inbox_token;
+}
+
+export async function getUserByInboxToken(pool, token) {
+  const { rows } = await pool.query("SELECT id, email, time_zone FROM users WHERE inbox_token = $1", [token]);
+  return rows[0] ?? null;
+}
+
+export async function setForwardCode(pool, userId, code) {
+  await pool.query("UPDATE users SET forward_code = $2 WHERE id = $1", [userId, code]);
 }
 
 export async function setDigest(pool, userId, enabled) {

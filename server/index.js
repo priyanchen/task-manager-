@@ -22,6 +22,9 @@ const config = {
   googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.BASE_URL),
   googleClientId: env.GOOGLE_CLIENT_ID,
   digestAvailable: Boolean(env.RESEND_API_KEY),
+  inboxDomain: env.INBOX_DOMAIN ?? "",
+  inboundSecret: env.INBOUND_SECRET ?? "",
+  dailyLimit: Number(env.DAILY_EXTRACTION_LIMIT ?? DEFAULT_DAILY_LIMIT),
   allowedEmails: (env.ALLOWED_EMAIL ?? "")
     .split(",")
     .map((email) => email.trim().toLowerCase())

@@ -58,6 +58,19 @@
         <ul id="month-other-list"></ul>
       </details>
     </details>
+    <details id="forwarding" hidden>
+      <summary>Forward emails instead (preview)</summary>
+      <p id="forward-address" class="due"></p>
+      <p id="forward-code" class="due" hidden></p>
+      <ol class="due">
+        <li>In Gmail open Settings, then Forwarding and POP/IMAP, and add your forwarding address. Gmail sends a confirmation code, which appears above.</li>
+        <li>Create a filter (Settings, Filters and blocked addresses) for words like webinar OR invitation OR register, and choose Forward it to your address.</li>
+        <li>Matching emails show up here as suggested events. Menu names can differ slightly.</li>
+      </ol>
+      <label for="paste-text">Try it now: paste the text of an event email</label>
+      <textarea id="paste-text" rows="6" maxlength="8000" placeholder="Paste an event invitation here"></textarea>
+      <button type="button" id="paste-find">Find events</button>
+    </details>
     <ul id="task-list"></ul>
   </main>
   <script src="script.js"></script>

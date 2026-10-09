@@ -29,6 +29,24 @@ export function dueScanDays(timeZone, now = new Date()) {
   return get("weekday") === "Sun" ? 8 : 2;
 }
 
+export async function ingestMessage({ pool, userId, extract, message, today, id = message.id, dailyLimit = DEFAULT_DAILY_LIMIT }) {
+  const looksRight = looksLikeEvent(message.subject, message.text);
+  let found = 0;
+  let added = 0;
+
+  if (looksRight) {
+    if ((await getUsage(pool, userId, today)) >= dailyLimit) return { limited: true, looksLikeEvent: true, found, added };
+    await addUsage(pool, userId, today);
+    const events = await extract({ from: message.from, subject: message.subject, text: message.text, today });
+    found = events.length;
+    for (const event of events) {
+      if (await insertSuggestion(pool, userId, event)) added++;
+    }
+  }
+  await markScanned(pool, userId, id);
+  return { limited: false, looksLikeEvent: looksRight, found, added };
+}
+
 export async function runScan({ pool, userId, mail, extract, days, today, dailyLimit = DEFAULT_DAILY_LIMIT }) {
   const ids = await mail.listIds(days);
   const result = { messages: ids.length, scanned: 0, found: 0, added: 0, failed: 0, rateLimited: false, limited: false };
@@ -39,26 +57,14 @@ export async function runScan({ pool, userId, mail, extract, days, today, dailyL
     try {
       const message = await mail.getMessage(id);
       result.scanned++;
-
-      if (looksLikeEvent(message.subject, message.text)) {
-        if ((await getUsage(pool, userId, today)) >= dailyLimit) {
-          result.limited = true;
-          result.scanned--;
-          break;
-        }
-        await addUsage(pool, userId, today);
-        const events = await extract({
-          from: message.from,
-          subject: message.subject,
-          text: message.text,
-          today,
-        });
-        result.found += events.length;
-        for (const event of events) {
-          if (await insertSuggestion(pool, userId, event)) result.added++;
-        }
+      const outcome = await ingestMessage({ pool, userId, extract, message, today, id, dailyLimit });
+      if (outcome.limited) {
+        result.limited = true;
+        result.scanned--;
+        break;
       }
-      await markScanned(pool, userId, id);
+      result.found += outcome.found;
+      result.added += outcome.added;
     } catch (error) {
       if (String(error?.message).includes("invalid_grant")) throw error;
       if (isRateLimit(error)) {
