@@ -37,7 +37,7 @@ before(async () => {
     pool,
     services: { makeCalendar: () => ({ listBusy: async () => busyEvents }) },
     scanner: async () => ({}),
-    config: { sessionSecret: "test", secureCookies: false, googleConfigured: false, googleClientId: "", allowedEmails: [] },
+    config: { sessionSecret: "test", secureCookies: false, googleConfigured: false, googleClientId: "", digestAvailable: true, allowedEmails: [] },
   });
   server = app.listen(0);
   base = `http://localhost:${server.address().port}`;
@@ -71,7 +71,7 @@ test("state-changing requests without the CSRF header are rejected", async () =>
 
 test("/api/me reports signed-out state without leaking data", async () => {
   const body = await (await fetch(`${base}/api/me`)).json();
-  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem" });
+  assert.deepEqual(body, { configured: false, authenticated: false, email: null, connected: false, timeZone: "Asia/Jerusalem", digest: false, digestAvailable: true });
 });
 
 test("security headers are set", async () => {
@@ -120,4 +120,17 @@ test("/api/conflicts lists overlaps for the signed-in user only", async () => {
   assert.deepEqual(await conflicts(alice), { [talk.id]: { overlaps: ["Dentist"], duplicate: false } });
   assert.deepEqual(await conflicts(bob), {});
   assert.equal((await fetch(`${base}/api/conflicts?from=2030-01-01&to=2030-12-31`)).status, 401);
+});
+
+test("the daily digest setting is per user and must be a boolean", async () => {
+  const put = (id, body) =>
+    fetch(base + "/api/settings", {
+      method: "PUT",
+      headers: { cookie: cookieFor(id), "X-Requested-With": "fetch", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const me = async (id) => (await (await fetch(base + "/api/me", { headers: { cookie: cookieFor(id) } })).json());
+  assert.equal((await put(alice, { digest: "yes" })).status, 400);
+  assert.equal((await put(alice, { digest: true })).status, 200);
+  assert.deepEqual([(await me(alice)).digest, (await me(bob)).digest, (await me(alice)).digestAvailable], [true, false, true]);
 });

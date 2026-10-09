@@ -14,6 +14,7 @@ import {
   listSuggestions,
   saveToken,
   setStatus,
+  setDigest,
   setTimeZone,
   upsertUser,
 } from "./db.js";
@@ -170,13 +171,18 @@ export function createApp({ pool, services, scanner, config, track = () => {} })
       email: user?.email ?? null,
       connected: user ? Boolean(await getToken(pool, user.id)) : false,
       timeZone: user?.time_zone ?? DEFAULT_TIME_ZONE,
+      digest: Boolean(user?.digest_enabled),
+      digestAvailable: Boolean(config.digestAvailable),
     });
   });
 
   app.put("/api/settings", requireAuth, async (req, res) => {
-    if (!validTimeZone(req.body?.timeZone)) return res.status(400).json({ error: "Invalid time zone" });
-    await setTimeZone(pool, req.session.userId, req.body.timeZone);
-    res.json({ timeZone: req.body.timeZone });
+    const { timeZone, digest } = req.body ?? {};
+    if (timeZone !== undefined && !validTimeZone(timeZone)) return res.status(400).json({ error: "Invalid time zone" });
+    if (digest !== undefined && typeof digest !== "boolean") return res.status(400).json({ error: "digest must be true or false" });
+    if (timeZone !== undefined) await setTimeZone(pool, req.session.userId, timeZone);
+    if (digest !== undefined) await setDigest(pool, req.session.userId, digest);
+    res.json({ timeZone, digest });
   });
 
   app.get("/api/suggestions", requireAuth, async (req, res) => {
