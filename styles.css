@@ -269,6 +269,44 @@ button.secondary:hover {
   font-size: 0.8rem;
 }
 
+#month-overview {
+  margin-top: 1.25rem;
+}
+
+#month-overview summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#month-list,
+#month-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#month-list > li {
+  margin-top: 0.75rem;
+}
+
+.month-date {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+#month-list ul li {
+  padding: 0.25rem 0 0 0.25rem;
+  font-size: 0.9rem;
+}
+
+#month-overview[hidden] {
+  display: none;
+}
+
+#month-list .dim {
+  color: #6b7280;
+}
+
 #task-list {
   list-style: none;
   margin: 1.25rem 0 0;
