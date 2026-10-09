@@ -139,10 +139,41 @@ button:hover {
 }
 
 #status {
-  min-height: 1.2em;
   margin: 0 0 0.75rem;
-  color: #6b7280;
+  color: #374151;
   font-size: 0.9rem;
+}
+
+#status:not(:empty) {
+  padding: 0.5rem 0.75rem;
+  background: #f4f8ff;
+  border: 1px solid #cfe0fb;
+  border-radius: 8px;
+}
+
+#status.busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.5rem;
+  vertical-align: -0.1em;
+  border: 2px solid #1f6feb;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #status.busy::before {
+    animation-duration: 2.4s;
+  }
 }
 
 button.secondary {

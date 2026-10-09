@@ -255,8 +255,10 @@ async function changeSelected(action) {
     return;
   }
 
+  const stopProgress = showProgress(action === "add" ? "Adding to Google Calendar…" : "Skipping…");
   try {
     const result = await api(`/api/suggestions/${action}`, { method: "POST", body: { ids } });
+    stopProgress();
     if (action === "add") {
       const added = result.results.filter((r) => r.status === "added").length;
       const failed = result.results.filter((r) => r.status === "error").length;
@@ -265,23 +267,42 @@ async function changeSelected(action) {
       statusLine.textContent = `Skipped ${ids.length}.`;
     }
   } catch (error) {
+    stopProgress();
     statusLine.textContent = error.message;
   }
   await loadSuggestions();
 }
 
+function showProgress(message) {
+  const started = Date.now();
+  const tick = () => {
+    statusLine.textContent = `${message} ${Math.floor((Date.now() - started) / 1000)}s`;
+  };
+  statusLine.classList.add("busy");
+  tick();
+  const timer = setInterval(tick, 1000);
+  return () => {
+    clearInterval(timer);
+    statusLine.classList.remove("busy");
+  };
+}
+
 async function scanEmails() {
   scanButton.disabled = true;
-  statusLine.textContent = "Scanning emails…";
+  scanButton.textContent = "Scanning…";
+  const stopProgress = showProgress("Searching your emails for events… this can take a few minutes.");
   try {
     const result = await api("/api/scan", { method: "POST", body: { days: 7 } });
+    stopProgress();
     const note = result.rateLimited ? " Rate limit reached; click Scan emails again in a minute to continue." : "";
     const failed = result.failed ? ` ${result.failed} emails failed and will be retried.` : "";
-    statusLine.textContent = `Scanned ${result.scanned} new emails, found ${result.found} events, ${result.added} new.${failed}${note}`;
+    statusLine.textContent = `Done. Scanned ${result.scanned} new emails, found ${result.found} events, ${result.added} new.${failed}${note}`;
   } catch (error) {
+    stopProgress();
     statusLine.textContent = error.message;
   }
   scanButton.disabled = false;
+  scanButton.textContent = "Scan emails";
   await loadSuggestions();
 }
 
