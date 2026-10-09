@@ -70,7 +70,7 @@ test("runScan stores only extracted fields and never rescans a message", async (
   };
 
   const first = await runScan({ pool, mail, extract, days: 2, today: "2030-01-01" });
-  assert.deepEqual(first, { messages: 2, scanned: 2, found: 1, added: 1, failed: 0 });
+  assert.deepEqual(first, { messages: 2, scanned: 2, found: 1, added: 1, failed: 0, rateLimited: false });
 
   const second = await runScan({ pool, mail, extract, days: 2, today: "2030-01-01" });
   assert.equal(second.scanned, 0);
@@ -78,6 +78,31 @@ test("runScan stores only extracted fields and never rescans a message", async (
 
   const { rows } = await pool.query("SELECT * FROM suggestions");
   assert.ok(!Object.keys(rows[0]).some((column) => /body|text|subject/.test(column)));
+});
+
+test("runScan stops on a rate limit and leaves unscanned messages for the next run", async () => {
+  const pool = await freshPool();
+  const messages = {
+    m1: { id: "m1", from: "A", subject: "Webinar one", text: "register https://zoom.us/x" },
+    m2: { id: "m2", from: "A", subject: "Webinar two", text: "register https://zoom.us/y" },
+    m3: { id: "m3", from: "A", subject: "Webinar three", text: "register https://zoom.us/z" },
+  };
+  const mail = {
+    listIds: async () => ["m1", "m2", "m3"],
+    getMessage: async (id) => {
+      if (id === "m2") throw Object.assign(new Error("Quota exceeded for quota metric 'Total Query Cost'"), { code: 429 });
+      return messages[id];
+    },
+  };
+  const first = await runScan({ pool, mail, extract: async () => [], days: 2, today: "2030-01-01" });
+  assert.equal(first.rateLimited, true);
+  assert.equal(first.scanned, 1);
+  assert.equal(first.failed, 0);
+
+  const healthy = { ...mail, getMessage: async (id) => messages[id] };
+  const second = await runScan({ pool, mail: healthy, extract: async () => [], days: 2, today: "2030-01-01" });
+  assert.equal(second.rateLimited, false);
+  assert.equal(second.scanned, 2);
 });
 
 test("buildEvent makes timed and all-day Google Calendar events", () => {

@@ -29,7 +29,11 @@ const services = {
   makeCalendar: createCalendar,
   extract(input) {
     extractor ??= createExtractor({
-      client: new Anthropic(),
+      client: new Anthropic(
+        env.ANTHROPIC_WORKSPACE_ID
+          ? { defaultHeaders: { "anthropic-workspace-id": env.ANTHROPIC_WORKSPACE_ID } }
+          : undefined,
+      ),
       model: env.EXTRACTION_MODEL ?? "claude-haiku-5-5",
     });
     return extractor(input);

@@ -48,20 +48,50 @@ function collectParts(part, out) {
   for (const child of part.parts ?? []) collectParts(child, out);
 }
 
+export function isRateLimit(error) {
+  return (
+    error?.code === 429 ||
+    error?.status === 429 ||
+    /quota exceeded|rate.?limit/i.test(String(error?.message))
+  );
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MIN_GAP_MS = 250;
+const RETRY_WAITS_MS = [5000, 15000, 30000];
+
 export function createMail(refreshToken) {
   const gmail = google.gmail({ version: "v1", auth: authorizedClient(refreshToken) });
+  let lastCall = 0;
+
+  // New Google projects get only 6,000 quota units per minute per user, so pace calls and back off on 429.
+  async function paced(call) {
+    for (let attempt = 0; ; attempt++) {
+      const wait = lastCall + MIN_GAP_MS - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastCall = Date.now();
+      try {
+        return await call();
+      } catch (error) {
+        if (!isRateLimit(error) || attempt >= RETRY_WAITS_MS.length) throw error;
+        await sleep(RETRY_WAITS_MS[attempt]);
+      }
+    }
+  }
 
   return {
     async listIds(days) {
       const ids = [];
       let pageToken;
       do {
-        const { data } = await gmail.users.messages.list({
-          userId: "me",
-          q: `newer_than:${days}d -in:sent -in:spam -in:trash`,
-          maxResults: 100,
-          pageToken,
-        });
+        const { data } = await paced(() =>
+          gmail.users.messages.list({
+            userId: "me",
+            q: `newer_than:${days}d -in:sent -in:spam -in:trash`,
+            maxResults: 100,
+            pageToken,
+          }),
+        );
         ids.push(...(data.messages ?? []).map((message) => message.id));
         pageToken = data.nextPageToken;
       } while (pageToken && ids.length < MAX_MESSAGES_PER_SCAN);
@@ -69,7 +99,7 @@ export function createMail(refreshToken) {
     },
 
     async getMessage(id) {
-      const { data } = await gmail.users.messages.get({ userId: "me", id, format: "full" });
+      const { data } = await paced(() => gmail.users.messages.get({ userId: "me", id, format: "full" }));
       const header = (name) =>
         data.payload?.headers?.find((h) => h.name.toLowerCase() === name)?.value ?? "";
       const parts = { plain: [], html: [] };
